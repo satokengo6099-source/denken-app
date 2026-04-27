@@ -151,17 +151,26 @@ def send_daily_report(full_df):
     except Exception as e:
         st.error(f"メール送信失敗: {e}"); return False
 
+# （send_daily_report 関数の終わり）
+        return True
+    except Exception as e:
+        st.error(f"メール送信失敗: {e}"); return False
+
+# ⭐ ここに「定義」を置く
 def check_and_trigger_report():
     try:
         sys_df = conn.read(spreadsheet=target_url, worksheet="System")
         last_sent = str(sys_df.iloc[0, 0])
-    except: last_sent = "2000-01-01"
+    except: 
+        last_sent = "2000-01-01"
+    
     today_str = datetime.today().strftime('%Y-%m-%d')
     if last_sent != today_str:
         full_df = load_full_data()
         if send_daily_report(full_df):
             conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
             st.toast("昨日のレポートを送信しました📩")
+
 
 # --- 4. UI構築・メインロジック ---
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
