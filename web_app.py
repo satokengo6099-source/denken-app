@@ -173,102 +173,95 @@ if 'last_user' not in st.session_state or st.session_state.last_user != current_
         st.session_state.db = sync_user_data(load_full_data(), current_user)
         st.session_state.last_user, st.session_state.test_pool, st.session_state.history = current_user, [], []
 
-db = st.session_state.db
+# --- メニュー切り替え ---
+st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
 
-# 進捗計算
+# 進捗・ノルマ計算（共通）
 today_dt = datetime.today().date()
-unstarted = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
-st.sidebar.metric("目標期日まで", f"{max(0, (USER_CONFIG[current_user]['deadline'] - today_dt).days)}日")
-st.sidebar.progress((len(db) - len(unstarted)) / len(db))
+unstarted_list = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
+total_count = len(db)
+answered_count = total_count - len(unstarted_list)
 
+st.sidebar.metric("目標期日までの日数", f"{max(0, (target_date - today_dt).days)}日")
+st.sidebar.progress(answered_count / total_count if total_count > 0 else 0)
+st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({answered_count/total_count*100:.1f}%)")
+
+# --- メインコンテンツの分岐 ---
 if mode_select == "学習モード":
     st.title(f"⚡ 学習：{current_user}")
     fields = ["すべて"] + list(db['field'].unique())
     selected_field = st.selectbox("分野を選択", fields)
-    pool = [q for q in unstarted if selected_field == "すべて" or q["field"] == selected_field]
+    pool = [q for q in unstarted_list if selected_field == "すべて" or q["field"] == selected_field]
+    
     if st.button("🚀 学習開始", use_container_width=True):
-        st.session_state.test_pool, st.session_state.history = pool, []
+        st.session_state.test_pool = pool
+        st.session_state.history = []
         st.rerun()
 
 elif mode_select == "復習モード":
     st.title(f"🔄 復習：{current_user}")
-    rev_pool = [q for q in db.to_dict('records') if str(q.get("last_date", "")) not in ["", "nan", "None", "NaN"] and int(q['level']) < 5]
-    rev_pool.sort(key=lambda x: int(x['level'])) # 点数の低い順
+    review_pool = [q for q in db.to_dict('records') if str(q.get("last_date", "")) not in ["", "nan", "None", "NaN"] and int(q.get("level", 0)) < 5]
+    review_pool.sort(key=lambda x: int(x.get("level", 0)))
+    
     if st.button("🔥 復習開始", use_container_width=True):
-        st.session_state.test_pool, st.session_state.history = rev_pool, []
+        st.session_state.test_pool = review_pool
+        st.session_state.history = []
         st.rerun()
 
 else:
-    else:
-    # --- 📊 強化版：分析ダッシュボード & 🧘 自戒の部屋 ---
+    # --- 📊 強化版：分析・自戒ダッシュボード ---
     st.title(f"📊 分析・自戒：{current_user}")
     
     full_df_ana = load_full_data()
     yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-    user_yesterday_data = full_df_ana[(full_df_ana['user'] == current_user) & (full_df_ana['last_date'] == yesterday_str)]
-    done_yesterday = len(user_yesterday_data)
+    user_yesterday = full_df_ana[(full_df_ana['user'] == current_user) & (full_df_ana['last_date'] == yesterday_str)]
+    done_yesterday = len(user_yesterday)
 
-    # --- 🧘 自戒セクション（ロック機能） ---
+    # 🧘 自戒の部屋
     st.subheader("🧘 自戒の部屋")
     if done_yesterday == 0:
         st.error(f"🚨 警告：昨日の進捗は 0 問です。")
-        # セッション状態でロックを管理
         if f"unlocked_{current_user}" not in st.session_state:
             st.session_state[f"unlocked_{current_user}"] = False
 
         if not st.session_state[f"unlocked_{current_user}"]:
-            st.info("反省文（30文字以上）を提出するまで、今日の問題は解けません。")
-            reflection_text = st.text_area("反省文：なぜサボったのか、今日はどう挽回するのか", key="reflection_input")
-            
-            if st.button("反省文を提出して学習を開始する"):
-                if len(reflection_text) >= 30:
-                    # Reflectionsシートに保存（シート名: Reflections）
+            reflection = st.text_area("反省文（30文字以上）を入力しない限り、ロックは解除されません", key="ref_input")
+            if st.button("反省文を提出"):
+                if len(reflection) >= 30:
                     try:
-                        new_ref = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d'), current_user, reflection_text]], 
-                                               columns=["date", "user", "content"])
+                        new_ref = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d'), current_user, reflection]], columns=["date", "user", "content"])
                         conn.update(spreadsheet=target_url, worksheet="Reflections", data=new_ref)
-                    except:
-                        st.warning("スプレッドシートに 'Reflections' シートを作成してください。記録はされませんがロックは解除します。")
-                    
+                    except: pass
                     st.session_state[f"unlocked_{current_user}"] = True
-                    st.success("反省を受理しました。")
                     st.rerun()
                 else:
-                    st.warning("反省が足りません。30文字以上で入力してください。")
+                    st.warning("反省が足りません。")
     else:
         st.session_state[f"unlocked_{current_user}"] = True
         st.success(f"✅ 昨日は {done_yesterday} 問の努力が確認されました。")
 
     st.divider()
 
-    # --- 🏁 戦況報告（3人の比較表） ---
+    # 🏁 進捗比較
     st.subheader("🏁 メンバー進捗比較")
     comparison = []
     for user in USER_CONFIG.keys():
         u_df = full_df_ana[full_df_ana['user'] == user]
-        total = len(u_df)
-        done = len(u_df[u_df['last_date'] != ""])
-        rate = (done / total * 100) if total > 0 else 0
-        comparison.append({"ユーザー": user, "進捗率(%)": round(rate, 1), "完了数": done})
+        comparison.append({"ユーザー": user, "進捗率(%)": round(len(u_df[u_df['last_date'] != ""]) / len(u_df) * 100, 1)})
     st.table(pd.DataFrame(comparison).sort_values("進捗率(%)", ascending=False))
 
-    # --- 🚩 苦手ワースト10 ---
+    # 🚩 苦手ワースト10
+    st.subheader("🚩 苦手ワースト10")
     df_ana = db.copy()
     df_ana['単元'] = df_ana['q_num'].str.split('No').str[0]
-    res = df_ana.groupby(['field', '単元']).agg(
-        total=('q_num', 'count'),
-        correct=('level', lambda x: (x >= 3).sum()),
-        done_q=('last_date', lambda x: (x != "").sum())
-    ).reset_index()
+    res = df_ana.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level', lambda x: (x >= 3).sum()), done_q=('last_date', lambda x: (x != "").sum())).reset_index()
     res['正答率'] = (res['correct'] / res['total'] * 100).round(1)
-    
-    st.subheader("🚩 苦手ワースト10")
     worst = res[res['done_q'] > 0].sort_values('正答率').head(10)
     for r in worst.itertuples():
         st.error(f"{r.field}：{r.単元} ({r.正答率}%)")
 
-# --- 4. 共通の問題表示・ナビゲーションエリア ---
+# --- 4. 共通の問題表示・解答エリア ---
 is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
 
 if mode_select in ["学習モード", "復習モード"]:
@@ -276,69 +269,39 @@ if mode_select in ["学習モード", "復習モード"]:
         st.warning("🚨 現在ロックされています。「分析・自戒」メニューから反省文を提出してください。")
     elif st.session_state.test_pool:
         st.divider()
-        
-        # --- 🚀 ジャンプ機能（問題を一気に選択して飛ばす） ---
-        st.subheader("🚀 ナビゲーション")
+        # 🚀 ナビゲーション
         q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
-        selected_idx = st.selectbox("取り組む問題へジャンプ（または一気に飛ばす）", 
-                                    range(len(q_labels)), 
-                                    format_func=lambda x: q_labels[x],
-                                    index=0)
-        
-        # 選択されたインデックスまでプールを整理（選択した問題が先頭に来るようにする）
-        if selected_idx > 0 and st.button("この問題までスキップする"):
+        selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x])
+        if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
             st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
             st.rerun()
 
-        # --- 📖 問題表示 ---
+        # 📖 問題表示
         curr = st.session_state.test_pool[0]
-        st.divider()
-        st.subheader(f"【{curr['field']}】")
-        st.header(curr['q_num'])
-        st.caption(f"現在のプール残り: {len(st.session_state.test_pool)} 問")
+        st.subheader(f"【{curr['field']}】 {curr['q_num']}")
         
-        # --- ✍️ 解答・評価ボタン ---
+        # 解答ボタン
         cols = st.columns(6)
         for i in range(6):
             if cols[i].button(f"{i}点", key=f"b{i}"):
-                # 履歴保存（戻るボタン用）
-                st.session_state.history.append({
-                    "q_num": curr["q_num"], 
-                    "field": curr["field"], 
-                    "old_level": curr.get("level", 0), 
-                    "old_date": curr.get("last_date", "")
-                })
-                
-                # DB更新
+                st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
                 idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
                 st.session_state.db.loc[idx, ['level', 'last_date']] = [i, datetime.today().strftime('%Y-%m-%d')]
-                
                 full = load_full_data()
                 conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
-                
                 st.session_state.test_pool.pop(0)
                 st.rerun()
         
-        # --- ⏪ 戻る & ⏭️ スキップ ---
-        col1, col2 = st.columns(2)
-        
-        # 戻るボタン（直前の解答を取り消してプールに戻す）
-        if col1.button("↩️ 1つ戻る（ミス修正）", disabled=not st.session_state.history, use_container_width=True):
+        # 戻る・スキップ
+        c1, c2 = st.columns(2)
+        if c1.button("↩️ 1つ戻る", disabled=not st.session_state.history, use_container_width=True):
             last = st.session_state.history.pop()
-            
-            # DBの値を元に戻す
             idx = st.session_state.db[(st.session_state.db['q_num'] == last['q_num']) & (st.session_state.db['field'] == last['field'])].index
-            st.session_state.db.loc[idx, 'level'] = last['old_level']
-            st.session_state.db.loc[idx, 'last_date'] = last['old_date']
-            
-            # プールの先頭に問題を戻す
+            st.session_state.db.loc[idx, ['level', 'last_date']] = [last['old_level'], last['old_date']]
             st.session_state.test_pool.insert(0, st.session_state.db.loc[idx].to_dict('records')[0])
-            
-            # DB保存
             full = load_full_data()
             conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
             st.rerun()
-
-        if col2.button("⏭️ 後回しにする（スキップ）", use_container_width=True):
+        if c2.button("⏭️ 後回しにする", use_container_width=True):
             st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
             st.rerun()
