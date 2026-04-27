@@ -3,9 +3,10 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import random
 from datetime import datetime, timedelta
+import smtplib
+from email.mime.text import MIMEText
 
 # --- 1. ユーザー別個別設定 ---
-# ここでそれぞれの目標期日とリストの形式を設定します
 USER_CONFIG = {
     "佐藤": {
         "deadline": datetime(2026, 8, 22).date(),
@@ -31,7 +32,7 @@ USER_CONFIG = {
         ]
     },
     "稲垣": {
-        "deadline": datetime(2026, 9, 1).date(), # 暫定の期日
+        "deadline": datetime(2026, 9, 1).date(),
         "structure": [
             ("理論", "直流回路", 1, 24), ("理論", "静電気", 25, 50), ("理論", "電磁力", 51, 70),
             ("理論", "交流回路", 71, 107), ("理論", "三相交流回路", 108, 120), ("理論", "過渡現象とその他の波形", 121, 130),
@@ -50,9 +51,8 @@ USER_CONFIG = {
         ]
     },
     "風穴": {
-        "deadline": datetime(2026, 10, 15).date(), # 暫定の期日
+        "deadline": datetime(2026, 10, 15).date(),
         "structure": [
-            # 稲垣さんと同じ構成
             ("理論", "直流回路", 1, 24), ("理論", "静電気", 25, 50), ("理論", "電磁力", 51, 70),
             ("理論", "交流回路", 71, 107), ("理論", "三相交流回路", 108, 120), ("理論", "過渡現象とその他の波形", 121, 130),
             ("理論", "電子理論", 131, 156), ("理論", "電気測定", 157, 172),
@@ -73,40 +73,32 @@ USER_CONFIG = {
 
 INTERVALS = {0: 0, 1: 1, 2: 3, 3: 7, 4: 14, 5: 30}
 
-# --- 2. データベース接続関数 ---
+# --- 2. データベース接続・メール関数 ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
 def load_full_data():
     try:
-        # 見出し: user, field, q_num, level, last_date (計5列)
         df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4])
-        return df.dropna(how="all")
+        df = df.dropna(how="all")
+        df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
+        df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>'], '')
+        return df
     except:
         return pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
 
 def sync_user_data(full_df, user_name):
-    """ユーザーごとのリスト形式（3項か4項か）を判別して同期"""
-    user_df = full_df[full_df['user'] == user_name]
+    user_df = full_df[full_df['user'] == user_name].copy()
     existing_q = set(user_df['field'] + "_" + user_df['q_num'])
-    
     structure = USER_CONFIG[user_name]["structure"]
     new_rows = []
-    
     for item in structure:
-        field = item[0]
-        cat = item[1]
-        # 形式判定：(field, cat, count) か (field, cat, start, end) か
-        if len(item) == 3:
-            start, end = 1, item[2]
-        else:
-            start, end = item[2], item[3]
-            
+        field, cat = str(item[0]), str(item[1])
+        start, end = (1, item[2]) if len(item) == 3 else (item[2], item[3])
         for i in range(start, end + 1):
             q_id = f"{cat}No{i}"
             if f"{field}_{q_id}" not in existing_q:
-                new_rows.append({"user": user_name, "field": field, "q_num": q_id, "level": 0, "last_date": ""})
-    
+                new_rows.append({"user": str(user_name), "field": field, "q_num": q_id, "level": 0, "last_date": ""})
     if new_rows:
         updated_user_df = pd.concat([user_df, pd.DataFrame(new_rows)], ignore_index=True)
         other_users = full_df[full_df['user'] != user_name]
@@ -115,121 +107,114 @@ def sync_user_data(full_df, user_name):
         return updated_user_df
     return user_df
 
+def send_daily_report(full_df):
+    """精神攻撃・煽りモードのメール送信"""
+    try:
+        sender = "satokengo6099@gmail.com"
+        password = "wvht mzfv hiqh aefc"
+        receiver = "satokengo6099@gmail.com"
+        yesterday = (datetime.today() - timedelta(days=1)).strftime('%Y/%m/%d')
+        
+        body = f"⚠️ 【重要：学習怠慢者への警告】 {yesterday} 進捗レポート\n" + "="*50 + "\n"
+        body += "※このメールは、昨日のあなたの『やる気』を客観的に評価したものです。\n" + "="*50 + "\n\n"
+
+        for user in USER_CONFIG.keys():
+            u_data = full_df[full_df['user'] == user]
+            y_data = u_data[u_data['last_date'] == (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')]
+            done = len(y_data)
+            avg = pd.to_numeric(y_data['level'], errors='coerce').mean() if done > 0 else 0
+            
+            body += f"👤 利用者: {user}\n📊 消化数: {done}問 / 平均スコア: {avg:.1f}点\n"
+            if done >= 20:
+                body += "💬 評価: 【合格確実】素晴らしい。他の二人が口先だけでサボっている間に、あなたは着実に合格を掴んでいます。このまま彼らを見捨てて、自分だけ高みへ登りましょう。\n"
+            elif done >= 10:
+                body += "💬 評価: 【不合格予備軍】可もなく不可もない、一番『落ちる』タイプです。周りはもっと必死ですよ？明日もそのぬるま湯に浸かり続けますか？\n"
+            elif done > 0:
+                body += "💬 評価: 【記念受験】たった数問で勉強したつもりですか？滑稽ですね。試験会場で恥をかくだけです。これ以上醜態を晒す前に、いっそ今すぐ辞めたらどうですか？\n"
+            else:
+                body += "💬 評価: 【ゴミ】1問も解いていない？正気ですか？口先だけで『合格したい』と言いながら一日中寝ていただけ。あなたの人生は無意味なゴミそのものです。恥を知りなさい。\n"
+            body += "-"*30 + "\n\n"
+        
+        msg = MIMEText(body + "\n※不満があるなら、今すぐ机に向かいなさい。\n")
+        msg["Subject"] = f"🚨【電験】昨日のお前らの無様な結果だ"
+        msg["From"], msg["To"] = sender, receiver
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+            s.login(sender, password)
+            s.send_message(msg)
+        return True
+    except Exception as e:
+        st.error(f"メール送信失敗: {e}"); return False
+
+def check_and_trigger_report():
+    try:
+        sys_df = conn.read(spreadsheet=target_url, worksheet="System")
+        last_sent = str(sys_df.iloc[0, 0])
+    except: last_sent = "2000-01-01"
+    if last_sent != datetime.today().strftime('%Y-%m-%d'):
+        full_df = load_full_data()
+        if send_daily_report(full_df):
+            conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[datetime.today().strftime('%Y-%m-%d')]], columns=["last_report_date"]))
+            st.toast("昨日のレポートを送信しました📩")
+
 # --- 3. UI構築 ---
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
+check_and_trigger_report()
 
-# ユーザー選択
-st.sidebar.title("👤 ユーザー設定")
 current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()))
-target_date = USER_CONFIG[current_user]["deadline"]
-
-# データの読み込み管理
 if 'last_user' not in st.session_state or st.session_state.last_user != current_user:
-    with st.spinner(f"{current_user}さんのデータを読み込み中..."):
-        full_data = load_full_data()
-        st.session_state.db = sync_user_data(full_data, current_user)
-        st.session_state.last_user = current_user
-        st.session_state.test_pool = []
-        st.session_state.history = []
+    st.session_state.db = sync_user_data(load_full_data(), current_user)
+    st.session_state.last_user, st.session_state.test_pool, st.session_state.history = current_user, [], []
 
 db = st.session_state.db
-
-# メニュー切り替え
-st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
 
-# 進捗・ノルマ計算
+# 進捗計算
 today_dt = datetime.today().date()
-days_left = (target_date - today_dt).days
-unstarted_list = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
-total_count = len(db)
-answered_count = total_count - len(unstarted_list)
-
-st.sidebar.metric("目標期日までの日数", f"{max(0, days_left)}日")
-st.sidebar.progress(answered_count / total_count if total_count > 0 else 0)
-st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({answered_count/total_count*100:.1f}%)")
+unstarted = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
+st.sidebar.metric("目標期日までの日数", f"{max(0, (USER_CONFIG[current_user]['deadline'] - today_dt).days)}日")
+st.sidebar.progress((len(db) - len(unstarted)) / len(db))
 
 if mode_select == "学習モード":
     st.title(f"⚡ 学習：{current_user}")
     fields = ["すべて"] + list(db['field'].unique())
     selected_field = st.selectbox("分野を選択", fields)
-    
-    # 未着手のみ、リストの順番通りに抽出
-    pool = [q for q in unstarted_list if selected_field == "すべて" or q["field"] == selected_field]
-    
-    if days_left > 0:
-        quota = -(-len(pool) // days_left) if pool else 0
-        st.info(f"📅 期日：{target_date}　今日のノルマ：**{quota}問**")
-        if quota > 0:
-            st.warning(f"🚩 本日の目標：{pool[0]['q_num']} 〜 {pool[min(quota-1, len(pool)-1)]['q_num']}")
-
+    pool = [q for q in unstarted if selected_field == "すべて" or q["field"] == selected_field]
     if st.button("🚀 学習開始", use_container_width=True):
-        st.session_state.test_pool = pool
-        st.session_state.history = []
+        st.session_state.test_pool, st.session_state.history = pool, []
         st.rerun()
 
 elif mode_select == "復習モード":
     st.title(f"🔄 復習：{current_user}")
-    review_pool = [q for q in db.to_dict('records') if str(q.get("last_date", "")) not in ["", "nan", "None", "NaN"] and int(float(q.get("level", 0))) < 5]
-    review_pool.sort(key=lambda x: int(float(x.get("level", 0))))
-    
-    st.metric("復習が必要な問題", f"{len(review_pool)}問")
+    rev_pool = [q for q in db.to_dict('records') if str(q.get("last_date", "")) not in ["", "nan", "None", "NaN"] and int(q['level']) < 5]
+    rev_pool.sort(key=lambda x: int(x['level']))
     if st.button("🔥 復習開始", use_container_width=True):
-        st.session_state.test_pool = review_pool
-        st.session_state.history = []
+        st.session_state.test_pool, st.session_state.history = rev_pool, []
         st.rerun()
 
 else:
-    # --- 分析 ---
-    st.title("📊 分析："+current_user)
+    st.title(f"📊 分析：{current_user}")
     df_ana = db.copy()
-    df_ana['level'] = pd.to_numeric(df_ana['level']).fillna(0)
     df_ana['単元'] = df_ana['q_num'].str.split('No').str[0]
-    
-    res = df_ana.groupby(['field', '単元']).agg(
-        total=('q_num', 'count'),
-        correct=('level', lambda x: (x >= 3).sum()),
-        done=('last_date', lambda x: (x.astype(str) != "nan").sum())
-    ).reset_index()
+    res = df_ana.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level', lambda x: (x >= 3).sum()), done=('last_date', lambda x: (x != "").sum())).reset_index()
     res['正答率'] = (res['correct'] / res['total'] * 100).round(1)
-
-    st.subheader("📈 科目別の平均正答率")
     st.bar_chart(res.groupby('field')['正答率'].mean())
-
-    st.subheader("🚩 弱点克服ランキング")
     worst = res[res['done'] > 0].sort_values('正答率').head(10)
-    if not worst.empty:
-        for i, r in enumerate(worst.itertuples(), 1):
-            st.error(f"{i}位: {r.field} / {r.単元} ({r.正答率}%)")
-    else:
-        st.info("データがたまると、ここに苦手単元が表示されます。")
+    for i, r in enumerate(worst.itertuples(), 1): st.error(f"{i}位: {r.field}/{r.単元} ({r.正答率}%)")
 
-# --- 4. 共通の問題表示 ---
-if mode_select in ["学習モード", "復習モード"] and st.session_state.test_pool:
+if st.session_state.test_pool:
     st.divider()
     curr = st.session_state.test_pool[0]
     st.subheader(f"【{curr['field']}】")
     st.header(curr['q_num'])
-    
     cols = st.columns(6)
     for i in range(6):
         if cols[i].button(f"{i}点", key=f"b{i}"):
             st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
-            
-            # DB更新
             idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
-            st.session_state.db.loc[idx, 'level'] = i
-            st.session_state.db.loc[idx, 'last_date'] = datetime.today().strftime('%Y-%m-%d')
-            
-            # 全体保存
-            full_df = load_full_data()
-            other_users = full_df[full_df['user'] != current_user]
-            new_full = pd.concat([other_users, st.session_state.db], ignore_index=True)
-            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
-            
-            st.session_state.test_pool.pop(0)
-            st.rerun()
-
+            st.session_state.db.loc[idx, ['level', 'last_date']] = [i, datetime.today().strftime('%Y-%m-%d')]
+            full = load_full_data()
+            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+            st.session_state.test_pool.pop(0); st.rerun()
     if st.button("⏭️ スキップ"):
-        st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
-        st.rerun()
+        st.session_state.test_pool.append(st.session_state.test_pool.pop(0)); st.rerun()
+
