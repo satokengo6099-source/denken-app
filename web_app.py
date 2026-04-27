@@ -4,35 +4,96 @@ import pandas as pd
 import random
 from datetime import datetime, timedelta
 
-# --- 1. データ管理（Google Sheets） ---
+# --- 1. データ管理の設定 ---
 INTERVALS = {0: 0, 1: 1, 2: 3, 3: 7, 4: 14, 5: 30}
 
 def get_master_structure():
+    """全科目のマスター構成を定義（分野, カテゴリ, 問題数）"""
     return [
-        ("理論", "直流回路", 1, 24), ("理論", "静電気", 25, 50), ("理論", "電磁力", 51, 70),
-        ("理論", "交流回路", 71, 107), ("理論", "三相交流回路", 108, 120), ("理論", "過渡現象とその他の波形", 121, 130),
-        ("理論", "電子理論", 131, 156), ("理論", "電気測定", 157, 172),
-        ("機械", "直流機", 1, 22), ("機械", "変圧器", 23, 41), ("機械", "誘導機", 42, 61),
-        ("機械", "同期機", 62, 84), ("機械", "パワエレ", 85, 103), ("機械", "自動制御", 104, 113),
-        ("機械", "情報", 114, 122), ("機械", "照明", 123, 128), ("機械", "電熱", 129, 137),
-        ("機械", "電動機応用", 138, 146), ("機械", "電気化学", 147, 157),
-        ("電力", "水力発電", 1, 12), ("電力", "火力発電", 13, 42), ("電力", "原子力発電", 43, 56),
-        ("電力", "その他の発電", 57, 68), ("電力", "変電", 69, 89), ("電力", "送電", 90, 101),
-        ("電力", "配電", 102, 117), ("電力", "地中電線路", 118, 125), ("電力", "電気材料", 126, 141),
-        ("電力", "電力計算", 142, 168), ("電力", "線路計算", 169, 172), ("電力", "電線のたるみと支線", 173, 175),
-        ("法規", "電気事業法", 1, 13), ("法規", "その他の電気関係法規", 14, 17),
-        ("法規", "電気設備の技術基準・解釈", 18, 31), ("法規", "電気設備技術基準(計算)", 32, 54),
-        ("法規", "発電用風力設備の技術基準", 55, 57), ("法規", "電気施設管理", 58, 91)
+        # --- 理論2023 ---
+        ("理論2023", "静電気", 15),
+        ("理論2023", "磁気", 15),
+        ("理論2023", "直流回路", 15),
+        ("理論2023", "交流回路", 15),
+        ("理論2023", "過渡現象", 15),
+        ("理論2023", "電気計測", 15),
+        ("理論2023", "半導体・電子回路", 24),
+        ("理論2023", "電子理論・その他", 6),
+        
+        # --- 機械2024 ---
+        ("機械2024", "直流機", 2),
+        ("機械2024", "誘導機", 13),
+        ("機械2024", "同期機", 13),
+        ("機械2024", "変圧器", 10),
+        ("機械2024", "保護機器", 4),
+        ("機械2024", "パワエレ", 15),
+        ("機械2024", "照明", 15),
+        ("機械2024", "電熱", 13),
+        ("機械2024", "電気化学", 12),
+        ("機械2024", "自動制御", 4),
+        ("機械2024", "情報", 13),
+        ("機械2024", "電気鉄道", 5),
+        ("機械2024", "その他", 1),
+
+        # --- 機械H25 ---
+        ("機械H25", "直流機", 6),
+        ("機械H25", "誘導機", 15),
+        ("機械H25", "同期機", 12),
+        ("機械H25", "変圧器", 10),
+        ("機械H25", "保護機器", 7),
+        ("機械H25", "パワエレ", 15),
+        ("機械H25", "照明", 13),
+        ("機械H25", "電熱", 5),
+        ("機械H25", "電気化学", 8),
+        ("機械H25", "電動力応用", 1),
+        ("機械H25", "自動制御", 10),
+        ("機械H25", "情報", 16),
+        ("機械H25", "電気鉄道", 1),
+        ("機械H25", "その他", 1),
+
+        # --- 電力2022 ---
+        ("電力2022", "水力発電", 13),
+        ("電力2022", "汽力発電", 12),
+        ("電力2022", "原子力発電", 2),
+        ("電力2022", "発電一般・その他", 15),
+        ("電力2022", "変電", 18),
+        ("電力2022", "送電", 30),
+        ("電力2022", "配電", 15),
+
+        # --- 電力H25 ---
+        ("電力H25", "水力発電", 11),
+        ("電力H25", "汽力発電", 18),
+        ("電力H25", "原子力発電", 5),
+        ("電力H25", "発電一般・その他", 14),
+        ("電力H25", "変電", 19),
+        ("電力H25", "送電", 26),
+        ("電力H25", "配電", 12),
+
+        # --- 法規2024 ---
+        ("法規2024", "電気事業法関連", 22),
+        ("法規2024", "電気設備技術基準", 55),
+        ("法規2024", "施設管理", 28),
+
+        # --- 法規H27 ---
+        ("法規2024H27", "電気事業法関連", 26),
+        ("法規2024H27", "電気設備技術基準", 47),
+        ("法規2024H27", "施設管理", 32)
     ]
 
 # データベース（スプレッドシート）と接続
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# SecretsからURLを取得
+try:
+    target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+except Exception:
+    st.error("Secretsに 'spreadsheet' URLを設定してください")
+    st.stop()
+
 def load_and_sync_data():
-    # スプレッドシートからデータを読み込む
     try:
-        df = conn.read(worksheet="Sheet1", usecols=[0, 1, 2, 3])
-        df = df.dropna(how="all") # 空行を削除
+        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3])
+        df = df.dropna(how="all")
         current_db = df.to_dict('records')
     except Exception:
         current_db = []
@@ -40,27 +101,24 @@ def load_and_sync_data():
     existing_names = {f"{item['field']}_{item['q_num']}" for item in current_db if 'field' in item}
     new_added = False
     
-    # マスターデータとの差分チェック
-    for subject, category, start_num, end_num in get_master_structure():
-        for i in range(start_num, end_num + 1):
+    # リストに基づいて1番から連番で作成
+    for subject, category, count in get_master_structure():
+        for i in range(1, count + 1):
             q_id = f"{category}No{i}"
             if f"{subject}_{q_id}" not in existing_names:
                 current_db.append({"field": subject, "q_num": q_id, "level": 0, "last_date": ""})
                 new_added = True
                 
     if new_added:
-        # 新しい問題が追加されたらスプレッドシートを更新
-        updated_df = pd.DataFrame(current_db)
-        conn.update(worksheet="Sheet1", data=updated_df)
+        save_data(current_db)
         
     return current_db
 
 def save_data(data):
-    # スプレッドシートを上書き保存
     updated_df = pd.DataFrame(data)
-    conn.update(worksheet="Sheet1", data=updated_df)
+    conn.update(spreadsheet=target_url, worksheet="Sheet1", data=updated_df)
 
-# --- 2. 状態管理（セッション） ---
+# --- 2. 状態管理 ---
 if 'db' not in st.session_state:
     st.session_state.db = load_and_sync_data()
 if 'test_pool' not in st.session_state:
@@ -87,12 +145,15 @@ if st.button("🚀 テスト開始", use_container_width=True):
     for item in db:
         if selected_field != "すべて" and item["field"] != selected_field:
             continue
-        if selected_mode == "新規学習" and str(item.get("last_date", "")) in ["", "nan", "None"]:
+        
+        last_date_val = str(item.get("last_date", ""))
+        if selected_mode == "新規学習" and last_date_val in ["", "nan", "None"]:
             pool.append(item)
-        elif selected_mode == "復習モード" and str(item.get("last_date", "")) not in ["", "nan", "None"]:
+        elif selected_mode == "復習モード" and last_date_val not in ["", "nan", "None"]:
             try:
-                last_date = datetime.strptime(str(item["last_date"]), '%Y-%m-%d').date()
-                if today >= last_date + timedelta(days=INTERVALS[int(item["level"])]):
+                last_date = datetime.strptime(last_date_val, '%Y-%m-%d').date()
+                lv = int(float(item.get("level", 0)))
+                if today >= last_date + timedelta(days=INTERVALS.get(lv, 0)):
                     pool.append(item)
             except:
                 pass
@@ -112,11 +173,11 @@ st.divider()
 
 if len(st.session_state.test_pool) > 0:
     current_q = st.session_state.test_pool[0]
-    
     st.subheader(f"【{current_q['field']}】")
     st.header(f"{current_q['q_num']}")
     
-    status_text = "未学習" if str(current_q.get('last_date', '')) in ["", "nan", "None"] else f"前回: {int(current_q['level'])}点"
+    last_date_val = str(current_q.get('last_date', ''))
+    status_text = "未学習" if last_date_val in ["", "nan", "None"] else f"前回: {int(float(current_q['level']))}点"
     st.info(f"残り: {len(st.session_state.test_pool)}問 | 状態: {status_text}")
     
     st.write("理解度を入力してください：")
@@ -124,12 +185,14 @@ if len(st.session_state.test_pool) > 0:
     for i in range(6):
         if cols[i].button(f"{i}点", key=f"btn_{i}", use_container_width=True):
             st.session_state.history.append({
-                "q_num": current_q["q_num"], "old_level": current_q.get("level", 0), "old_date": current_q.get("last_date", "")
+                "q_num": current_q["q_num"], 
+                "field": current_q["field"],
+                "old_level": current_q.get("level", 0), 
+                "old_date": current_q.get("last_date", "")
             })
             
-            # DBの該当データを更新
             for row in st.session_state.db:
-                if row["q_num"] == current_q["q_num"]:
+                if row["q_num"] == current_q["q_num"] and row["field"] == current_q["field"]:
                     row["level"] = i
                     row["last_date"] = datetime.today().strftime('%Y-%m-%d')
                     break
@@ -143,15 +206,12 @@ if len(st.session_state.test_pool) > 0:
     
     if col_opt1.button("↩️ 1つ戻る", disabled=len(st.session_state.history)==0, use_container_width=True):
         last_action = st.session_state.history.pop()
-        
-        # DBを履歴の状態に戻す
         for row in st.session_state.db:
-            if row["q_num"] == last_action["q_num"]:
+            if row["q_num"] == last_action["q_num"] and row["field"] == last_action["field"]:
                 row["level"] = last_action["old_level"]
                 row["last_date"] = last_action["old_date"]
-                st.session_state.test_pool.insert(0, row) # プールに戻す
+                st.session_state.test_pool.insert(0, row)
                 break
-                
         save_data(st.session_state.db)
         st.rerun()
         
@@ -161,4 +221,4 @@ if len(st.session_state.test_pool) > 0:
         st.rerun()
         
 elif 'test_pool' in st.session_state and len(st.session_state.test_pool) == 0 and st.button("もう一度開始する"):
-     st.success("🎉 完了しました！条件を変えて再度開始してください。")
+     st.success("🎉 条件に合う問題はすべて完了しました！")
