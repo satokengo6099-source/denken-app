@@ -167,15 +167,36 @@ def check_and_trigger_report():
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
 check_and_trigger_report()
 
+
+# --- ユーザー選択とデータ読み込み管理 ---
 current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()))
+target_date = USER_CONFIG[current_user]["deadline"] # 💡これを忘れずに追加
+
 if 'last_user' not in st.session_state or st.session_state.last_user != current_user:
-    with st.spinner("データ読み込み中..."):
-        st.session_state.db = sync_user_data(load_full_data(), current_user)
-        st.session_state.last_user, st.session_state.test_pool, st.session_state.history = current_user, [], []
+    with st.spinner(f"{current_user}さんのデータを読み込み中..."):
+        full_data = load_full_data()
+        st.session_state.db = sync_user_data(full_data, current_user)
+        st.session_state.last_user = current_user
+        st.session_state.test_pool = []
+        st.session_state.history = []
+
+# ⭐【ここが重要！】
+# セッションから db を取り出して、プログラム全体で使えるようにします
+if "db" in st.session_state:
+    db = st.session_state.db
+else:
+    # 初回アクセス時など、まだデータがない場合はリロードを促す
+    st.stop() 
 
 # --- メニュー切り替え ---
 st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
+
+
+
+
+
+
 
 # 進捗・ノルマ計算（共通）
 today_dt = datetime.today().date()
