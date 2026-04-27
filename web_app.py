@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
 
-# --- 1. ユーザー別個別設定 ---
+# --- 1. ユーザー別個別設定（期日・問題リスト・形式） ---
 USER_CONFIG = {
     "佐藤": {
         "deadline": datetime(2026, 8, 22).date(),
@@ -71,23 +71,26 @@ USER_CONFIG = {
     }
 }
 
-INTERVALS = {0: 0, 1: 1, 2: 3, 3: 7, 4: 14, 5: 30}
-
-# --- 2. データベース接続・メール関数 ---
+# --- 2. データベース接続・型固定読み込み ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
 def load_full_data():
+    """スプレッドシートから全データを読み込み、型を強制固定する"""
     try:
         df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4])
         df = df.dropna(how="all")
+        # 型の不一致エラーを根こそぎ解消
         df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
         df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>'], '')
+        for col in ['user', 'field', 'q_num']:
+            df[col] = df[col].astype(str)
         return df
     except:
         return pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
 
 def sync_user_data(full_df, user_name):
+    """ユーザーごとのマスター構成を反映"""
     user_df = full_df[full_df['user'] == user_name].copy()
     existing_q = set(user_df['field'] + "_" + user_df['q_num'])
     structure = USER_CONFIG[user_name]["structure"]
@@ -103,39 +106,42 @@ def sync_user_data(full_df, user_name):
         updated_user_df = pd.concat([user_df, pd.DataFrame(new_rows)], ignore_index=True)
         other_users = full_df[full_df['user'] != user_name]
         new_full = pd.concat([other_users, updated_user_df], ignore_index=True)
+        new_full['level'] = new_full['level'].astype(int)
         conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
         return updated_user_df
     return user_df
 
+# --- 3. 精神攻撃メール送信機能 ---
 def send_daily_report(full_df):
-    """精神攻撃・煽りモードのメール送信"""
     try:
         sender = "satokengo6099@gmail.com"
         password = "wvht mzfv hiqh aefc"
         receiver = "satokengo6099@gmail.com"
-        yesterday = (datetime.today() - timedelta(days=1)).strftime('%Y/%m/%d')
+        yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+        display_date = (datetime.today() - timedelta(days=1)).strftime('%Y/%m/%d')
         
-        body = f"⚠️ 【重要：学習怠慢者への警告】 {yesterday} 進捗レポート\n" + "="*50 + "\n"
+        body = f"⚠️ 【重要：学習怠慢者への警告】 {display_date} 進捗レポート\n" + "="*50 + "\n"
         body += "※このメールは、昨日のあなたの『やる気』を客観的に評価したものです。\n" + "="*50 + "\n\n"
 
         for user in USER_CONFIG.keys():
             u_data = full_df[full_df['user'] == user]
-            y_data = u_data[u_data['last_date'] == (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')]
+            y_data = u_data[u_data['last_date'] == yesterday_str]
             done = len(y_data)
             avg = pd.to_numeric(y_data['level'], errors='coerce').mean() if done > 0 else 0
             
             body += f"👤 利用者: {user}\n📊 消化数: {done}問 / 平均スコア: {avg:.1f}点\n"
             if done >= 20:
-                body += "💬 評価: 【合格確実】素晴らしい。他の二人が口先だけでサボっている間に、あなたは着実に合格を掴んでいます。このまま彼らを見捨てて、自分だけ高みへ登りましょう。\n"
+                body += "💬 評価: 【合格確実】素晴らしい努力です。他の二人が口先だけでサボっている間に、あなたは着実に合格に近づいています。このまま彼らを見捨てて自分だけ高みへ登りましょう。\n"
             elif done >= 10:
-                body += "💬 評価: 【不合格予備軍】可もなく不可もない、一番『落ちる』タイプです。周りはもっと必死ですよ？明日もそのぬるま湯に浸かり続けますか？\n"
+                body += "💬 評価: 【不合格予備軍】可もなく不可もない、一番『落ちる』タイプです。その程度で満足ですか？明日もそのぬるま湯に浸かって、試験当日に絶望してください。\n"
             elif done > 0:
-                body += "💬 評価: 【記念受験】たった数問で勉強したつもりですか？滑稽ですね。試験会場で恥をかくだけです。これ以上醜態を晒す前に、いっそ今すぐ辞めたらどうですか？\n"
+                body += "💬 評価: 【記念受験】たった数問で勉強したつもりですか？試験会場で恥をかくだけです。これ以上醜態を晒す前に、いっそ今すぐ辞めたらどうですか？\n"
             else:
-                body += "💬 評価: 【ゴミ】1問も解いていない？正気ですか？口先だけで『合格したい』と言いながら一日中寝ていただけ。あなたの人生は無意味なゴミそのものです。恥を知りなさい。\n"
+                body += "💬 評価: 【ゴミ】1問も解いていない？正気ですか？『合格したい』という言葉が聞いて呆れます。あなたの人生は無意味なゴミそのものです。恥を知りなさい。\n"
             body += "-"*30 + "\n\n"
         
-        msg = MIMEText(body + "\n※不満があるなら、今すぐ机に向かいなさい。\n")
+        body += "\n※不満があるなら、言い訳する前に今すぐ机に向かいなさい。\n"
+        msg = MIMEText(body)
         msg["Subject"] = f"🚨【電験】昨日のお前らの無様な結果だ"
         msg["From"], msg["To"] = sender, receiver
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
@@ -150,20 +156,22 @@ def check_and_trigger_report():
         sys_df = conn.read(spreadsheet=target_url, worksheet="System")
         last_sent = str(sys_df.iloc[0, 0])
     except: last_sent = "2000-01-01"
-    if last_sent != datetime.today().strftime('%Y-%m-%d'):
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    if last_sent != today_str:
         full_df = load_full_data()
         if send_daily_report(full_df):
-            conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[datetime.today().strftime('%Y-%m-%d')]], columns=["last_report_date"]))
+            conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
             st.toast("昨日のレポートを送信しました📩")
 
-# --- 3. UI構築 ---
+# --- 4. UI構築・メインロジック ---
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
 check_and_trigger_report()
 
 current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()))
 if 'last_user' not in st.session_state or st.session_state.last_user != current_user:
-    st.session_state.db = sync_user_data(load_full_data(), current_user)
-    st.session_state.last_user, st.session_state.test_pool, st.session_state.history = current_user, [], []
+    with st.spinner("データ読み込み中..."):
+        st.session_state.db = sync_user_data(load_full_data(), current_user)
+        st.session_state.last_user, st.session_state.test_pool, st.session_state.history = current_user, [], []
 
 db = st.session_state.db
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
@@ -171,7 +179,7 @@ mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", 
 # 進捗計算
 today_dt = datetime.today().date()
 unstarted = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
-st.sidebar.metric("目標期日までの日数", f"{max(0, (USER_CONFIG[current_user]['deadline'] - today_dt).days)}日")
+st.sidebar.metric("目標期日まで", f"{max(0, (USER_CONFIG[current_user]['deadline'] - today_dt).days)}日")
 st.sidebar.progress((len(db) - len(unstarted)) / len(db))
 
 if mode_select == "学習モード":
@@ -186,7 +194,7 @@ if mode_select == "学習モード":
 elif mode_select == "復習モード":
     st.title(f"🔄 復習：{current_user}")
     rev_pool = [q for q in db.to_dict('records') if str(q.get("last_date", "")) not in ["", "nan", "None", "NaN"] and int(q['level']) < 5]
-    rev_pool.sort(key=lambda x: int(x['level']))
+    rev_pool.sort(key=lambda x: int(x['level'])) # 点数の低い順
     if st.button("🔥 復習開始", use_container_width=True):
         st.session_state.test_pool, st.session_state.history = rev_pool, []
         st.rerun()
@@ -197,10 +205,13 @@ else:
     df_ana['単元'] = df_ana['q_num'].str.split('No').str[0]
     res = df_ana.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level', lambda x: (x >= 3).sum()), done=('last_date', lambda x: (x != "").sum())).reset_index()
     res['正答率'] = (res['correct'] / res['total'] * 100).round(1)
+    st.subheader("📈 科目別の平均正答率")
     st.bar_chart(res.groupby('field')['正答率'].mean())
+    st.subheader("🚩 苦手単元ランキング (ワースト10)")
     worst = res[res['done'] > 0].sort_values('正答率').head(10)
     for i, r in enumerate(worst.itertuples(), 1): st.error(f"{i}位: {r.field}/{r.単元} ({r.正答率}%)")
 
+# 問題表示エリア
 if st.session_state.test_pool:
     st.divider()
     curr = st.session_state.test_pool[0]
@@ -217,4 +228,3 @@ if st.session_state.test_pool:
             st.session_state.test_pool.pop(0); st.rerun()
     if st.button("⏭️ スキップ"):
         st.session_state.test_pool.append(st.session_state.test_pool.pop(0)); st.rerun()
-
