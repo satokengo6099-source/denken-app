@@ -230,15 +230,42 @@ else:
 st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
 
-# 進捗・ノルマ計算（共通）
+# --- 📅 試験日カウントダウン＆進捗（サイドバー） ---
+# 🌟 本試験の日付（必要に応じて書き換えてください。例は2026年9月6日）
+EXAM_DATE = datetime(2026, 8, 30).date() 
+
 today_dt = datetime.today().date()
 unstarted_list = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
 total_count = len(db)
 answered_count = total_count - len(unstarted_list)
 
-st.sidebar.metric("目標期日までの日数", f"{max(0, (target_date - today_dt).days)}日")
+st.sidebar.divider()
+
+# 1. 本試験までのカウントダウン
+st.sidebar.metric("🔥 試験日まであと", f"{max(0, (EXAM_DATE - today_dt).days)}日")
+
+# 2. 各自の目標期日と進捗
+st.sidebar.metric("個人の目標期日まで", f"{max(0, (target_date - today_dt).days)}日")
 st.sidebar.progress(answered_count / total_count if total_count > 0 else 0)
 st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({answered_count/total_count*100:.1f}%)")
+
+# --- ✍️ モチベーションメッセージ ---
+# 少し余白を空けて下部に配置
+st.sidebar.markdown("<br><br><br>", unsafe_allow_html=True)
+st.sidebar.markdown("""
+    <div style="text-align: center; color: #555; padding: 10px; border-top: 1px solid #ddd;">
+        <p style="font-family: 'Georgia', serif; font-style: italic; font-size: 1.1em; margin-bottom: 2px;">
+            Where there is a "will", there is a way.
+        </p>
+        <p style="font-family: 'Yu Mincho', 'MS Mincho', serif; font-size: 0.9em; letter-spacing: 1px;">
+            意思あるところに道は開ける
+        </p>
+    </div>
+""", unsafe_allow_html=True)
+
+# --- メインコンテンツの分岐 ---
+if mode_select == "学習モード":
+
 
 # --- メインコンテンツの分岐 ---
 if mode_select == "学習モード":
