@@ -441,31 +441,36 @@ elif mode_select == mono_label:
                 except Exception as e:
                     st.error(f"送信に失敗しました: {e}")
 
-    # タイムライン表示
+# --- タイムライン表示 ---
     st.divider()
     try:
-        # データの読み込み
-        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues")
+        # 🌟 ttl=0 を追加してキャッシュを強制無効化し、常に最新を読み込む
+        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
         
-        # 🌟 ここで「date」列を日付型に強制変換してソート
-        display_mono['date'] = pd.to_datetime(display_mono['date'], errors='coerce')
-        display_mono = display_mono.dropna(subset=['date']).sort_values("date", ascending=False)
-
         if not display_mono.empty:
+            # カラム名を念のため綺麗にする（空白対策）
+            display_mono.columns = display_mono.columns.str.strip()
+            
+            # 日付順に並び替え（変換できないものは一番下に）
+            display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
+            display_mono = display_mono.sort_values("date_sort", ascending=False)
+
             for m in display_mono.itertuples():
-                # ユーザーによってアイコンを変える
-                is_me = (m.user == current_user)
+                # ユーザー判定
+                is_me = (str(m.user).strip() == current_user)
                 with st.chat_message("user" if is_me else "assistant"):
-                    # 日付のフォーマットを整える
-                    formatted_date = m.date.strftime('%m/%d %H:%M')
-                    st.write(f"**{m.user}** ({formatted_date})")
+                    # 日付表示（変換失敗してたら元の文字列を出す）
+                    d_show = m.date if pd.isna(m.date_sort) else m.date_sort.strftime('%m/%d %H:%M')
+                    
+                    st.write(f"**{m.user}** ({d_show})")
                     st.markdown(m.content)
-                    if hasattr(m, 'file_name') and m.file_name:
+                    # カラム名が正しいかチェックしながら表示
+                    if hasattr(m, 'file_name') and str(m.file_name) != "nan" and m.file_name:
                         st.caption(f"📎 添付資料: {m.file_name}")
         else:
             st.info("まだ投稿がありません。最初の独り言をどうぞ。")
     except Exception as e:
-        st.info("まだ投稿がありません。")
+        st.error(f"表示エラー: {e}")
 
 # --- 4. 共通の問題表示・解答エリア ---
 is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
