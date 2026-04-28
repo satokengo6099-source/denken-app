@@ -263,8 +263,6 @@ st.sidebar.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# --- メインコンテンツの分岐 ---
-if mode_select == "学習モード":
 
 
 # --- メインコンテンツの分岐 ---
