@@ -268,26 +268,65 @@ else:
     # 🏁 進捗比較
     st.subheader("🏁 メンバー進捗比較")
     comparison = []
+    
     for user in USER_CONFIG.keys():
-        u_df = full_df_ana[full_df_ana['user'] == user]
+        u_df = full_df_ana[full_df_ana['user'] == user].copy()
         total = len(u_df)
+        
         if total > 0:
-            rate = round(len(u_df[u_df['last_date'] != ""]) / total * 100, 1)
+            # 🌟 バグ修正: "nan" や "None" も未完了として除外する強固なフィルター
+            valid_done = u_df[~u_df['last_date'].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])]
+            done = len(valid_done)
+            rate = round((done / total) * 100, 1)
         else:
             rate = 0.0
-        comparison.append({"ユーザー": user, "進捗率(%)": rate})
+            
+        # 0.0000 のように表示されないよう、文字列としてフォーマット
+        comparison.append({"ユーザー": user, "進捗率": f"{rate}%"})
     
-    st.table(pd.DataFrame(comparison).sort_values("進捗率(%)", ascending=False))
+    st.table(pd.DataFrame(comparison))
 
-    # 🚩 苦手ワースト10
-    st.subheader("🚩 苦手ワースト10")
-    df_ana = db.copy()
-    df_ana['単元'] = df_ana['q_num'].str.split('No').str[0]
-    res = df_ana.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level', lambda x: (x >= 3).sum()), done_q=('last_date', lambda x: (x != "").sum())).reset_index()
-    res['正答率'] = (res['correct'] / res['total'] * 100).round(1)
-    worst = res[res['done_q'] > 0].sort_values('正答率').head(10)
-    for r in worst.itertuples():
-        st.error(f"{r.field}：{r.単元} ({r.正答率}%)")
+    # 🚩 各ユーザーの苦手ワースト（公開処刑）
+    st.subheader("🚩 メンバー別 苦手単元ワースト7 (公開処刑)")
+    
+    # ユーザー数（3人）に合わせて横に分割
+    cols = st.columns(len(USER_CONFIG.keys()))
+    
+    for idx, user in enumerate(USER_CONFIG.keys()):
+        with cols[idx]:
+            st.markdown(f"**👤 {user}の弱点**")
+            u_df = full_df_ana[full_df_ana['user'] == user].copy()
+            
+            if u_df.empty:
+                st.info("データ未生成")
+                continue
+
+            u_df['単元'] = u_df['q_num'].str.split('No').str[0]
+            # レベルを安全に数値化
+            u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
+            # 完了済みの判定フラグを作成
+            u_df['is_done'] = ~u_df['last_date'].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
+            
+            # 集計
+            u_res = u_df.groupby(['field', '単元']).agg(
+                total=('q_num', 'count'),
+                correct=('level_num', lambda x: (x >= 3).sum()),
+                done_q=('is_done', 'sum')
+            ).reset_index()
+            
+            u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
+            
+            # 1問でも解いた単元のうち、正答率が低い順に取得（縦に長くなりすぎないよう7個に設定）
+            worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
+            
+            if not worst.empty:
+                for r in worst.itertuples():
+                    # 視覚的にインパクトを出すためエラー色を使用
+                    st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
+            else:
+                st.success("弱点データなし\n（または未着手）")
+
+
 
 # --- 4. 共通の問題表示・解答エリア ---
 is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
