@@ -189,22 +189,35 @@ def send_daily_report(full_df):
         return False
 
 
+# 🌟 修正：アクセス過多（APIエラー）を防ぐため、1回のログインにつき1度だけチェックする
 def check_and_trigger_report():
+    # 既にチェック済みなら、スプレッドシートにアクセスせず即終了
+    if st.session_state.get("report_checked", False):
+        return
+
     try:
-        sys_df = conn.read(spreadsheet=target_url, worksheet="System")
+        sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=0)
         last_sent = str(sys_df.iloc[0, 0])
     except: 
         last_sent = "2000-01-01"
     
     today_str = datetime.today().strftime('%Y-%m-%d')
     if last_sent != today_str:
-        conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
-        full_df = load_full_data()
-        if send_daily_report(full_df):
-            st.toast("昨日のレポートを送信しました📩")
-        else:
-            conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[last_sent]], columns=["last_report_date"]))
-
+        try:
+            # 先に「今日送った」ことにする（他人の二重送信防止）
+            conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
+            
+            full_df = load_full_data()
+            if send_daily_report(full_df):
+                st.toast("昨日のレポートを送信しました📩")
+            else:
+                # 失敗したら戻す
+                conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[last_sent]], columns=["last_report_date"]))
+        except Exception as e:
+            st.error(f"レポート処理中にエラーが発生しました: {e}")
+    
+    # 無事にチェックが終わったらフラグを立てる（以降はボタンを押しても無視される）
+    st.session_state["report_checked"] = True
 # 🌟 既読チェック用の関数
 def check_unread_monologue(current_user):
     try:
