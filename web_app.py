@@ -209,8 +209,22 @@ def check_unread_monologue(current_user):
     try:
         mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues")
         status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus")
-        last_read = status_df.loc[status_df['user'] == current_user, 'last_read_at'].iloc[0]
-        new_posts = mono_df[(mono_df['user'] != current_user) & (mono_df['date'] > str(last_read))]
+        
+        # 自分の最終既読時間を取得
+        user_status = status_df[status_df['user'] == current_user]
+        if user_status.empty:
+            return False
+            
+        last_read = pd.to_datetime(user_status['last_read_at'].iloc[0])
+        
+        # 投稿データを日付型にして比較
+        mono_df['date_dt'] = pd.to_datetime(mono_df['date'], errors='coerce')
+        
+        # 自分以外の新しい投稿があるか
+        new_posts = mono_df[
+            (mono_df['user'] != current_user) & 
+            (mono_df['date_dt'] > last_read)
+        ]
         return len(new_posts) > 0
     except:
         return False
@@ -392,16 +406,15 @@ elif mode_select == "分析ダッシュボード":
                 st.success("弱点データなし\n（または未着手）")
 
 elif mode_select == mono_label:
-    # --- 📝 ただの独り言ダッシュボード ---
     st.title(f"📝 {mono_label.replace(' 🔴', '')}")
     
-    # 既読更新（画面を開いたら現在時刻を記録）
+    # 既読更新
     try:
         status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus")
         status_df.loc[status_df['user'] == current_user, 'last_read_at'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
         conn.update(spreadsheet=target_url, worksheet="ReadStatus", data=status_df)
-    except:
-        pass # 初回作成前はスキップ
+    except Exception as e:
+        st.error(f"既読状態の更新に失敗しました。ReadStatusシートを確認してください。")
 
     # 投稿フォーム
     with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
@@ -414,30 +427,45 @@ elif mode_select == mono_label:
                 new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], 
                                        columns=["date", "user", "content", "file_name"])
                 try:
+                    # 既存データを読み込んで結合
                     old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues")
-                    updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
-                except:
-                    updated_mono = new_mono
-                conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
-                st.success("投稿しました。")
-                st.rerun()
+                    # 空のデータや型変換エラーを避けるため、既存データがある場合のみ結合
+                    if not old_mono.empty:
+                        updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
+                    else:
+                        updated_mono = new_mono
+                    
+                    conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
+                    st.success("投稿しました。")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"送信に失敗しました: {e}")
 
     # タイムライン表示
     st.divider()
     try:
-        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues").sort_values("date", ascending=False)
+        # データの読み込み
+        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues")
+        
+        # 🌟 ここで「date」列を日付型に強制変換してソート
+        display_mono['date'] = pd.to_datetime(display_mono['date'], errors='coerce')
+        display_mono = display_mono.dropna(subset=['date']).sort_values("date", ascending=False)
+
         if not display_mono.empty:
             for m in display_mono.itertuples():
-                with st.chat_message("user" if m.user == current_user else "assistant"):
-                    st.write(f"**{m.user}** ({m.date})")
+                # ユーザーによってアイコンを変える
+                is_me = (m.user == current_user)
+                with st.chat_message("user" if is_me else "assistant"):
+                    # 日付のフォーマットを整える
+                    formatted_date = m.date.strftime('%m/%d %H:%M')
+                    st.write(f"**{m.user}** ({formatted_date})")
                     st.markdown(m.content)
-                    if m.file_name:
-                        st.caption(f"📎 添付資料: {m.file_name} (※別途共有フォルダを確認してください)")
+                    if hasattr(m, 'file_name') and m.file_name:
+                        st.caption(f"📎 添付資料: {m.file_name}")
         else:
-            st.write("まだ投稿がありません。")
-    except:
-        st.write("まだ投稿がありません。")
-
+            st.info("まだ投稿がありません。最初の独り言をどうぞ。")
+    except Exception as e:
+        st.info("まだ投稿がありません。")
 
 # --- 4. 共通の問題表示・解答エリア ---
 is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
