@@ -8,7 +8,8 @@ from email.mime.text import MIMEText
 
 # --- 1. ユーザー別個別設定（期日・問題リスト・形式） ---
 USER_CONFIG = {
-    "佐藤": {
+"佐藤": {
+        "email": "satokengo6099@gmail.com", # 自分のアドレス
         "deadline": datetime(2026, 8, 22).date(),
         "structure": [
             ("理論2023", "静電気", 15), ("理論2023", "磁気", 15), ("理論2023", "直流回路", 15),
@@ -31,7 +32,8 @@ USER_CONFIG = {
             ("法規2024H27", "電気事業法関連", 26), ("法規2024H27", "電気設備技術基準", 47), ("法規2024H27", "施設管理", 32)
         ]
     },
-    "稲垣": {
+"稲垣": {
+        "email": "inagaki@example.com", # 稲垣さんのアドレスに変える
         "deadline": datetime(2026, 9, 1).date(),
         "structure": [
             ("理論", "直流回路", 1, 24), ("理論", "静電気", 25, 50), ("理論", "電磁力", 51, 70),
@@ -50,7 +52,8 @@ USER_CONFIG = {
             ("法規", "発電用風力設備の技術基準", 55, 57), ("法規", "電気施設管理", 58, 91)
         ]
     },
-    "風穴": {
+"風穴": {
+        "email": "kazeana@example.com", # 風穴さんのアドレスに変える
         "deadline": datetime(2026, 10, 15).date(),
         "structure": [
             ("理論", "直流回路", 1, 24), ("理論", "静電気", 25, 50), ("理論", "電磁力", 51, 70),
@@ -110,6 +113,13 @@ def sync_user_data(full_df, user_name):
         conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
         return updated_user_df
     return user_df
+
+
+
+
+
+
+
 
 # --- 3. 精神攻撃メール送信機能 ---
 def send_daily_report(full_df):
@@ -201,11 +211,98 @@ else:
 st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
 
+# --- 3. 精神攻撃メール送信機能 ---
+def send_daily_report(full_df):
+    try:
+        sender = "satokengo6099@gmail.com"
+        password = "wvht mzfv hiqh aefc"
+        
+        # 🌟 変更: 宛先を USER_CONFIG から抽出して全員に送る設定
+        all_emails = [info.get("email") for info in USER_CONFIG.values() if info.get("email")]
+        receiver_str = ", ".join(all_emails) 
+        
+        yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+        display_date = (datetime.today() - timedelta(days=1)).strftime('%Y/%m/%d')
+        
+        body = f"⚠️ 【重要：学習怠慢者への警告】 {display_date} 進捗レポート\n" + "="*50 + "\n"
+        body += "※このメールは、昨日のあなたの『やる気』を客観的に評価したものです。\n" + "="*50 + "\n\n"
+
+        for user in USER_CONFIG.keys():
+            u_data = full_df[full_df['user'] == user]
+            y_data = u_data[u_data['last_date'] == yesterday_str]
+            done = len(y_data)
+            avg = pd.to_numeric(y_data['level'], errors='coerce').mean() if done > 0 else 0
+            
+            body += f"👤 利用者: {user}\n📊 消化数: {done}問 / 平均スコア: {avg:.1f}点\n"
+            if done >= 20:
+                body += "💬 評価: 【合格確実】素晴らしい努力です。他の二人が口先だけでサボっている間に、あなたは着実に合格に近づいています。このまま彼らを見捨てて自分だけ高みへ登りましょう。\n"
+            elif done >= 10:
+                body += "💬 評価: 【不合格予備軍】可もなく不可もない、一番『落ちる』タイプです。その程度で満足ですか？明日もそのぬるま湯に浸かって、試験当日に絶望してください。\n"
+            elif done > 0:
+                body += "💬 評価: 【記念受験】たった数問で勉強したつもりですか？試験会場で恥をかくだけです。これ以上醜態を晒す前に、いっそ今すぐ辞めたらどうですか？\n"
+            else:
+                body += "💬 評価: 【ゴミ】1問も解いていない？正気ですか？『合格したい』という言葉が聞いて呆れます。あなたの人生は無意味なゴミそのものです。恥を知りなさい。\n"
+            body += "-"*30 + "\n\n"
+        
+        body += "\n※不満があるなら、言い訳する前に今すぐ机に向かいなさい。\n"
+        msg = MIMEText(body)
+        msg["Subject"] = f"🚨【電験】昨日のお前らの無様な結果だ"
+        msg["From"], msg["To"] = sender, receiver_str # 🌟 修正: 宛先をリスト化
+        
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+            s.login(sender, password)
+            s.send_message(msg)
+        return True
+    except Exception as e:
+        st.error(f"メール送信失敗: {e}")
+        return False
+
+# 🌟 変更: 二重送信防止を強化
+def check_and_trigger_report():
+    try:
+        sys_df = conn.read(spreadsheet=target_url, worksheet="System")
+        last_sent = str(sys_df.iloc[0, 0])
+    except: 
+        last_sent = "2000-01-01"
+    
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    if last_sent != today_str:
+        # 送る前に「今日送った」ことにしちゃう（他人が同時にアクセスしたときの二重送信防止）
+        conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
+        
+        full_df = load_full_data()
+        if send_daily_report(full_df):
+            st.toast("昨日のレポートを送信しました📩")
+        else:
+            # 送信失敗したら元に戻す
+            conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[last_sent]], columns=["last_report_date"]))
 
 
+# --- 4. UI構築・メインロジック ---
+st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
+check_and_trigger_report()
 
 
+# --- ユーザー選択とデータ読み込み管理 ---
+current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()))
+target_date = USER_CONFIG[current_user]["deadline"]
 
+if 'last_user' not in st.session_state or st.session_state.last_user != current_user:
+    with st.spinner(f"{current_user}さんのデータを読み込み中..."):
+        full_data = load_full_data()
+        st.session_state.db = sync_user_data(full_data, current_user)
+        st.session_state.last_user = current_user
+        st.session_state.test_pool = []
+        st.session_state.history = []
+
+if "db" in st.session_state:
+    db = st.session_state.db
+else:
+    st.stop() 
+
+# --- メニュー切り替え ---
+st.sidebar.divider()
+mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
 
 # 進捗・ノルマ計算（共通）
 today_dt = datetime.today().date()
@@ -278,8 +375,20 @@ else:
     comparison = []
     for user in USER_CONFIG.keys():
         u_df = full_df_ana[full_df_ana['user'] == user]
-        comparison.append({"ユーザー": user, "進捗率(%)": round(len(u_df[u_df['last_date'] != ""]) / len(u_df) * 100, 1)})
+        total = len(u_df)
+        # 🌟 変更: 0除算エラーの回避
+        if total > 0:
+            rate = round(len(u_df[u_df['last_date'] != ""]) / total * 100, 1)
+        else:
+            rate = 0.0
+        comparison.append({"ユーザー": user, "進捗率(%)": rate})
+    
     st.table(pd.DataFrame(comparison).sort_values("進捗率(%)", ascending=False))
+
+
+
+
+
 
     # 🚩 苦手ワースト10
     st.subheader("🚩 苦手ワースト10")
