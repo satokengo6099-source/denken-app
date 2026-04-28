@@ -5,6 +5,7 @@ import random
 from datetime import datetime, timedelta
 import smtplib
 from email.mime.text import MIMEText
+import os  # 🌟 これを追加
 
 # --- 1. ユーザー別個別設定（期日・問題リスト・形式） ---
 USER_CONFIG = {
@@ -416,57 +417,71 @@ elif mode_select == mono_label:
     except Exception as e:
         st.error(f"既読状態の更新に失敗しました。ReadStatusシートを確認してください。")
 
-    # 投稿フォーム
+# 投稿フォーム
     with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
         note_content = st.text_area("内容（Markdown対応）")
-        uploaded_file = st.file_uploader("資料をアップロード（※ファイル名のみ記録）", type=['pdf', 'png', 'jpg'])
+        uploaded_file = st.file_uploader("資料をアップロード", type=['pdf', 'png', 'jpg', 'jpeg'])
         
         if st.button("投稿する"):
             if note_content:
-                f_name = uploaded_file.name if uploaded_file else ""
+                f_name = ""
+                # 🌟 追加：ファイル本体をサーバーの「uploads」フォルダに保存する
+                if uploaded_file:
+                    f_name = uploaded_file.name
+                    os.makedirs("uploads", exist_ok=True) # フォルダが無ければ作る
+                    file_path = os.path.join("uploads", f_name)
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer()) # ファイル本体を保存
+                
                 new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], 
                                        columns=["date", "user", "content", "file_name"])
                 try:
-                    # 既存データを読み込んで結合
                     old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues")
-                    # 空のデータや型変換エラーを避けるため、既存データがある場合のみ結合
                     if not old_mono.empty:
                         updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
                     else:
                         updated_mono = new_mono
-                    
                     conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
                     st.success("投稿しました。")
                     st.rerun()
                 except Exception as e:
                     st.error(f"送信に失敗しました: {e}")
 
-# --- タイムライン表示 ---
+    # タイムライン表示
     st.divider()
     try:
-        # 🌟 ttl=0 を追加してキャッシュを強制無効化し、常に最新を読み込む
         display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
         
         if not display_mono.empty:
-            # カラム名を念のため綺麗にする（空白対策）
             display_mono.columns = display_mono.columns.str.strip()
-            
-            # 日付順に並び替え（変換できないものは一番下に）
             display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
             display_mono = display_mono.sort_values("date_sort", ascending=False)
 
             for m in display_mono.itertuples():
-                # ユーザー判定
                 is_me = (str(m.user).strip() == current_user)
                 with st.chat_message("user" if is_me else "assistant"):
-                    # 日付表示（変換失敗してたら元の文字列を出す）
                     d_show = m.date if pd.isna(m.date_sort) else m.date_sort.strftime('%m/%d %H:%M')
-                    
                     st.write(f"**{m.user}** ({d_show})")
                     st.markdown(m.content)
-                    # カラム名が正しいかチェックしながら表示
+                    
+                    # 🌟 追加：保存したファイルを読み込んで表示・ダウンロードさせる
                     if hasattr(m, 'file_name') and str(m.file_name) != "nan" and m.file_name:
-                        st.caption(f"📎 添付資料: {m.file_name}")
+                        file_path = os.path.join("uploads", m.file_name)
+                        
+                        # ファイルが実際にサーバー上に存在するかチェック
+                        if os.path.exists(file_path):
+                            # 画像ならそのまま表示
+                            if m.file_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                                st.image(file_path, caption=m.file_name, use_container_width=True)
+                            # PDFなどならダウンロードボタンを表示
+                            else:
+                                with open(file_path, "rb") as f:
+                                    st.download_button(label=f"📥 {m.file_name} をダウンロード", 
+                                                       data=f, 
+                                                       file_name=m.file_name,
+                                                       mime="application/pdf")
+                        else:
+                            st.caption(f"📎 添付資料: {m.file_name} (※ファイル本体が見つかりません)")
         else:
             st.info("まだ投稿がありません。最初の独り言をどうぞ。")
     except Exception as e:
