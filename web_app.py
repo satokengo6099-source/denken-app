@@ -204,6 +204,16 @@ def check_and_trigger_report():
         else:
             conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[last_sent]], columns=["last_report_date"]))
 
+# 🌟 既読チェック用の関数
+def check_unread_monologue(current_user):
+    try:
+        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues")
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus")
+        last_read = status_df.loc[status_df['user'] == current_user, 'last_read_at'].iloc[0]
+        new_posts = mono_df[(mono_df['user'] != current_user) & (mono_df['date'] > str(last_read))]
+        return len(new_posts) > 0
+    except:
+        return False
 
 # --- 4. UI構築・メインロジック ---
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
@@ -227,8 +237,11 @@ else:
     st.stop() 
 
 # --- メニュー切り替え ---
+has_unread = check_unread_monologue(current_user)
+mono_label = "ただの独り言 🔴" if has_unread else "ただの独り言"
+
 st.sidebar.divider()
-mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード"])
+mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
 
 # --- 📅 試験日カウントダウン＆進捗（サイドバー） ---
 # 🌟 本試験の日付（必要に応じて書き換えてください。例は2026年9月6日）
@@ -288,7 +301,7 @@ elif mode_select == "復習モード":
         st.session_state.history = []
         st.rerun()
 
-else:
+elif mode_select == "分析ダッシュボード":
     # --- 📊 強化版：分析・自戒ダッシュボード ---
     st.title(f"📊 分析・自戒：{current_user}")
     
@@ -378,8 +391,52 @@ else:
             else:
                 st.success("弱点データなし\n（または未着手）")
 
-# --- 4. 共通の問題表示・解答エリア ---
-# （これ以降のコードはそのまま変更なし）
+elif mode_select == mono_label:
+    # --- 📝 ただの独り言ダッシュボード ---
+    st.title(f"📝 {mono_label.replace(' 🔴', '')}")
+    
+    # 既読更新（画面を開いたら現在時刻を記録）
+    try:
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus")
+        status_df.loc[status_df['user'] == current_user, 'last_read_at'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
+        conn.update(spreadsheet=target_url, worksheet="ReadStatus", data=status_df)
+    except:
+        pass # 初回作成前はスキップ
+
+    # 投稿フォーム
+    with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
+        note_content = st.text_area("内容（Markdown対応）")
+        uploaded_file = st.file_uploader("資料をアップロード（※ファイル名のみ記録）", type=['pdf', 'png', 'jpg'])
+        
+        if st.button("投稿する"):
+            if note_content:
+                f_name = uploaded_file.name if uploaded_file else ""
+                new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], 
+                                       columns=["date", "user", "content", "file_name"])
+                try:
+                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues")
+                    updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
+                except:
+                    updated_mono = new_mono
+                conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
+                st.success("投稿しました。")
+                st.rerun()
+
+    # タイムライン表示
+    st.divider()
+    try:
+        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues").sort_values("date", ascending=False)
+        if not display_mono.empty:
+            for m in display_mono.itertuples():
+                with st.chat_message("user" if m.user == current_user else "assistant"):
+                    st.write(f"**{m.user}** ({m.date})")
+                    st.markdown(m.content)
+                    if m.file_name:
+                        st.caption(f"📎 添付資料: {m.file_name} (※別途共有フォルダを確認してください)")
+        else:
+            st.write("まだ投稿がありません。")
+    except:
+        st.write("まだ投稿がありません。")
 
 
 # --- 4. 共通の問題表示・解答エリア ---
