@@ -111,6 +111,7 @@ def sync_user_data(full_df, user_name):
         return updated_user_df
     return user_df
 
+
 # --- 3. 精神攻撃メール送信機能 ---
 def send_daily_report(full_df):
     try:
@@ -120,19 +121,41 @@ def send_daily_report(full_df):
         all_emails = [info.get("email") for info in USER_CONFIG.values() if info.get("email")]
         receiver_str = ", ".join(all_emails) 
         
-        yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-        display_date = (datetime.today() - timedelta(days=1)).strftime('%Y/%m/%d')
+        yesterday_dt = (datetime.today() - timedelta(days=1)).date()
+        yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
+        display_date = yesterday_dt.strftime('%Y/%m/%d')
         
         body = f"⚠️ 【重要：学習怠慢者への警告】 {display_date} 進捗レポート\n" + "="*50 + "\n"
         body += "※このメールは、昨日のあなたの『やる気』を客観的に評価したものです。\n" + "="*50 + "\n\n"
 
         for user in USER_CONFIG.keys():
             u_data = full_df[full_df['user'] == user]
+            
+            # 🌟 追加：最後に問題を解いた日を検索し、正確なサボり日数を計算
+            valid_dates = u_data[u_data['last_date'].astype(str).str.contains("-", na=False)]['last_date']
+            if not valid_dates.empty:
+                last_action_str = valid_dates.max()
+                last_action_date = datetime.strptime(last_action_str, '%Y-%m-%d').date()
+                slack_days = (yesterday_dt - last_action_date).days
+            else:
+                slack_days = 999 # まだアプリを使い始めて1問も解いていない場合
+
+            if slack_days < 0:
+                slack_days = 0 # 日付を跨いで深夜に解いた場合などの保護
+
+            # 昨日のデータのみ抽出してスコア計算
             y_data = u_data[u_data['last_date'] == yesterday_str]
             done = len(y_data)
             avg = pd.to_numeric(y_data['level'], errors='coerce').mean() if done > 0 else 0
             
-            body += f"👤 利用者: {user}\n📊 消化数: {done}問 / 平均スコア: {avg:.1f}点\n"
+            # 🌟 名前剥奪の判定
+            if done == 0 and slack_days >= 3:
+                display_name = f"【💀】{user}は己の怠慢さにより敗北しました"
+            else:
+                display_name = user
+
+            body += f"👤 利用者: {display_name}\n📊 消化数: {done}問 / 平均スコア: {avg:.1f}点\n"
+            
             if done >= 20:
                 body += "💬 評価: 【合格確実】素晴らしい努力です。他の二人が口先だけでサボっている間に、あなたは着実に合格に近づいています。このまま彼らを見捨てて自分だけ高みへ登りましょう。\n"
             elif done >= 10:
@@ -140,12 +163,20 @@ def send_daily_report(full_df):
             elif done > 0:
                 body += "💬 評価: 【記念受験】たった数問で勉強したつもりですか？試験会場で恥をかくだけです。これ以上醜態を晒す前に、いっそ今すぐ辞めたらどうですか？\n"
             else:
-                body += "💬 評価: 【ゴミ】1問も解いていない？正気ですか？『合格したい』という言葉が聞いて呆れます。あなたの人生は無意味なゴミそのものです。恥を知りなさい。\n"
+                # 🌟 連続サボり日数（slack_days）に連動した専用メッセージ
+                if slack_days >= 3:
+                    if slack_days == 999:
+                        body += "💬 評価: 【完全なる敗北者】未だに1問も解いていませんね。電験への挑戦は、始まる前から己の怠慢という最大の敵の前に完全に敗れ去りました。哀れですね。\n"
+                    else:
+                        # 4日なら「4日連続で0問」、5日なら「5日連続で0問」と数字がカウントアップされる
+                        body += f"💬 評価: 【完全なる敗北者】{slack_days}日連続で0問。もはや言葉もありません。あなたの電験への挑戦は、己の怠慢という最大の敵の前に完全に敗れ去りました。哀れですね。\n"
+                else:
+                    body += "💬 評価: 【ゴミ】1問も解いていない？正気ですか？『合格したい』という言葉が聞いて呆れます。あなたの人生は無意味なゴミそのものです。恥を知りなさい。\n"
             body += "-"*30 + "\n\n"
         
         body += "\n※不満があるなら、言い訳する前に今すぐ机に向かいなさい。\n"
         msg = MIMEText(body)
-        msg["Subject"] = f"🚨【電験】昨日のお前らの無様な結果だ"
+        msg["Subject"] = f"🚨【電験】昨日のレポート"
         msg["From"], msg["To"] = sender, receiver_str
         
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
@@ -155,6 +186,7 @@ def send_daily_report(full_df):
     except Exception as e:
         st.error(f"メール送信失敗: {e}")
         return False
+
 
 def check_and_trigger_report():
     try:
@@ -274,22 +306,20 @@ else:
         total = len(u_df)
         
         if total > 0:
-            # 🌟 バグ修正: "nan" や "None" も未完了として除外する強固なフィルター
-            valid_done = u_df[~u_df['last_date'].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])]
+            # 🌟 究極のフィルター：「-（ハイフン）」が含まれているか（日付形式か）だけで判定する
+            valid_done = u_df[u_df['last_date'].astype(str).str.contains("-", na=False)]
             done = len(valid_done)
             rate = round((done / total) * 100, 1)
         else:
             rate = 0.0
             
-        # 0.0000 のように表示されないよう、文字列としてフォーマット
         comparison.append({"ユーザー": user, "進捗率": f"{rate}%"})
     
     st.table(pd.DataFrame(comparison))
 
-    # 🚩 各ユーザーの苦手ワースト（公開処刑）
-    st.subheader("🚩 メンバー別 苦手単元ワースト7 (公開処刑)")
+    # 🚩 各ユーザーの苦手単元ワースト
+    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
     
-    # ユーザー数（3人）に合わせて横に分割
     cols = st.columns(len(USER_CONFIG.keys()))
     
     for idx, user in enumerate(USER_CONFIG.keys()):
@@ -302,12 +332,11 @@ else:
                 continue
 
             u_df['単元'] = u_df['q_num'].str.split('No').str[0]
-            # レベルを安全に数値化
             u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-            # 完了済みの判定フラグを作成
-            u_df['is_done'] = ~u_df['last_date'].astype(str).str.strip().isin(["", "nan", "None", "NaN", "<NA>"])
             
-            # 集計
+            # 🌟 ここもハイフン判定に統一
+            u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
+            
             u_res = u_df.groupby(['field', '単元']).agg(
                 total=('q_num', 'count'),
                 correct=('level_num', lambda x: (x >= 3).sum()),
@@ -316,16 +345,16 @@ else:
             
             u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
             
-            # 1問でも解いた単元のうち、正答率が低い順に取得（縦に長くなりすぎないよう7個に設定）
             worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
             
             if not worst.empty:
                 for r in worst.itertuples():
-                    # 視覚的にインパクトを出すためエラー色を使用
                     st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
             else:
                 st.success("弱点データなし\n（または未着手）")
 
+# --- 4. 共通の問題表示・解答エリア ---
+# （これ以降のコードはそのまま変更なし）
 
 
 # --- 4. 共通の問題表示・解答エリア ---
