@@ -369,29 +369,48 @@ mono_label = "ただの独り言 🔴" if has_unread else "ただの独り言"
 st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
 
-# (以下、今のコードが続く...)
-
 # 📅 試験日カウントダウンと進捗計算
-# 🌟 本試験の日付（2026年8月30日に設定しています）
+# 🌟 本試験の日付（固定）
 EXAM_DATE = datetime(2026, 8, 30).date() 
 today_dt = datetime.today().date()
 
-# 今日の進捗（LINE通知判定用にも使う）
+# --- 🎯 修正ポイント：個人の目標期日をスプレッドシートから取得 ---
+try:
+    # GoalDatesシートから全ユーザーの目標日を読み込む
+    goal_df_sidebar = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=60)
+    
+    # 今ログインしているユーザーの行だけを抽出
+    user_goal_row = goal_df_sidebar[goal_df_sidebar['user'] == current_user]
+    
+    if not user_goal_row.empty:
+        # スプレッドシートに保存されている日付を読み込む
+        goal_date_str = user_goal_row.iloc[0]['goal_date']
+        personal_target_date = datetime.strptime(goal_date_str, '%Y-%m-%d').date()
+    else:
+        # 設定がない場合は、とりあえず本試験日をデフォルトにする
+        personal_target_date = EXAM_DATE
+except:
+    # エラー（シートがない等）の場合は本試験日を表示
+    personal_target_date = EXAM_DATE
+
+# 今日の進捗
 today_str = today_dt.strftime('%Y-%m-%d')
 done_today_count = len(db[db['last_date'] == today_str])
 
-# 全体進捗の計算
+# 全体進捗
 unstarted_list = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
 total_count = len(db)
 answered_count = total_count - len(unstarted_list)
 
 st.sidebar.divider()
 
-# 1. 本試験までのカウントダウン
-st.sidebar.metric("🔥 試験日まであと", f"{max(0, (EXAM_DATE - today_dt).days)}日")
+# 1. 本試験までのカウントダウン（全員共通）
+st.sidebar.metric("🔥 本試験まであと", f"{max(0, (EXAM_DATE - today_dt).days)}日")
 
-# 2. 各自の目標期日と進捗バー
-st.sidebar.metric("個人の目標期日まで", f"{max(0, (target_date - today_dt).days)}日")
+# 2. 個人の目標期日（ユーザーごとに可変！）
+days_left_personal = (personal_target_date - today_dt).days
+st.sidebar.metric(f"🏁 {current_user}の目標まで", f"{max(0, days_left_personal)}日")
+
 st.sidebar.progress(answered_count / total_count if total_count > 0 else 0)
 st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({answered_count/total_count*100:.1f}%)")
 st.sidebar.write(f"📊 本日のノルマ: **{done_today_count} / 20**")
@@ -647,6 +666,45 @@ elif mode_select == "分析ダッシュボード":
             
     except Exception as e:
         st.error(f"時間データの読み込み中にエラーが発生しました: {e}")
+
+# --- 📅 個人の目標期日設定エリア ---
+    st.info(f"💡 {current_user}さんの目標設定")
+    
+    try:
+        # 目標期日データの読み込み
+        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=0)
+        
+        # 現在の自分の設定があるか確認
+        my_goal_row = goal_df[goal_df['user'] == current_user]
+        
+        # 初期値の設定（なければ今日から115日後などをデフォルトにする）
+        default_date = datetime.today() + timedelta(days=115)
+        if not my_goal_row.empty:
+            current_goal_str = my_goal_row.iloc[0]['goal_date']
+            default_date = datetime.strptime(current_goal_str, '%Y-%m-%d')
+        
+        # 日付入力フォーム
+        new_goal = st.date_input("個人の目標期日を変更する", default_date)
+        
+        if st.button("目標期日を更新する"):
+            new_goal_str = new_goal.strftime('%Y-%m-%d')
+            if not my_goal_row.empty:
+                # 既存の行を更新
+                idx = goal_df[goal_df['user'] == current_user].index[0]
+                goal_df.loc[idx, 'goal_date'] = new_goal_str
+            else:
+                # 新しく追加
+                new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
+                goal_df = pd.concat([goal_df, new_row], ignore_index=True)
+            
+            conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
+            st.success(f"目標期日を {new_goal_str} に更新しました！")
+            st.rerun()
+            
+    except Exception as e:
+        st.error(f"目標期日の読み込みエラー: {e}")
+    
+    st.divider()
 
 
     # 🚩 各ユーザーの苦手単元ワースト
