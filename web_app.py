@@ -588,22 +588,32 @@ elif mode_select == "分析ダッシュボード":
             ).properties(height=300)
             st.altair_chart(chart_field, use_container_width=True)
             
-        with col_p2:
-            st.markdown("##### 📖 単元別の理解度")
+with col_p2:
+            st.markdown("##### 📖 分野ごとの単元別理解度")
             # 🌟 魔法のコード：q_numから「No」の前半だけを自動抽出！
             attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
             
-            unit_acc = attempted.groupby('unit')['accuracy'].mean().reset_index()
+            # 解答履歴にある「分野（理論、機械など）」のリストをすべて取得
+            unique_fields = attempted['field'].unique()
             
-            # 単元別は横棒グラフの方が見やすい
-            chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
-                x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                y=alt.Y('unit', title='単元', sort='-x'), # 理解度が高い順に並べる
-                color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
-                tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-            ).properties(height=300)
-            st.altair_chart(chart_unit, use_container_width=True)
-            
+            # 🌟 分野ごとにループを回して、それぞれのグラフを作る
+            for field_name in unique_fields:
+                st.markdown(f"###### 📘 {field_name}")
+                
+                # その分野（例：理論）だけのデータを抽出して集計
+                field_data = attempted[attempted['field'] == field_name]
+                unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
+                
+                # グラフの作成
+                chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
+                    x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y('unit', title='単元', sort='-x'), # 理解度が高い順に並べる
+                    color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
+                    tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+                ).properties(height=200) # グラフの高さを少しスッキリさせる
+                
+                st.altair_chart(chart_unit, use_container_width=True)
+                
     else:
         st.info("まだ解答データがありません。問題を解くと分析が表示されます。")
 
