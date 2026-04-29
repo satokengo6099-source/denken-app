@@ -390,42 +390,27 @@ elif mode_select == "復習モード":
         st.session_state.history = []
         st.rerun()
 
+
+
 elif mode_select == "分析ダッシュボード":
-    # --- 📊 強化版：分析・自戒ダッシュボード ---
-    st.title(f"📊 分析・自戒：{current_user}")
+    st.title(f"📊 分析ダッシュボード：{current_user}")
     
     full_df_ana = load_full_data()
     yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
     user_yesterday = full_df_ana[(full_df_ana['user'] == current_user) & (full_df_ana['last_date'] == yesterday_str)]
     done_yesterday = len(user_yesterday)
 
-    # 🧘 自戒の部屋
-    st.subheader("🧘 自戒の部屋")
+    # シンプルな進捗報告のみに変更
     if done_yesterday == 0:
-        st.error(f"🚨 警告：昨日の進捗は 0 問です。")
-        if f"unlocked_{current_user}" not in st.session_state:
-            st.session_state[f"unlocked_{current_user}"] = False
-
-        if not st.session_state[f"unlocked_{current_user}"]:
-            reflection = st.text_area("反省文（30文字以上）を入力しない限り、ロックは解除されません", key="ref_input")
-            if st.button("反省文を提出"):
-                if len(reflection) >= 30:
-                    try:
-                        new_ref = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d'), current_user, reflection]], columns=["date", "user", "content"])
-                        conn.update(spreadsheet=target_url, worksheet="Reflections", data=new_ref)
-                    except: pass
-                    st.session_state[f"unlocked_{current_user}"] = True
-                    st.rerun()
-                else:
-                    st.warning("反省が足りません。")
+        st.error(f"🚨 警告：昨日の進捗は 0 問です。言い訳せずに今日は遅れを取り戻しましょう。")
     else:
-        st.session_state[f"unlocked_{current_user}"] = True
         st.success(f"✅ 昨日は {done_yesterday} 問の努力が確認されました。")
 
     st.divider()
 
     # 🏁 進捗比較
     st.subheader("🏁 メンバー進捗比較")
+    # (ここから下の「比較」や「ワースト7」の処理はそのまま残す)
     comparison = []
     
     for user in USER_CONFIG.keys():
@@ -552,21 +537,16 @@ elif mode_select == mono_label:
 # --- 7. 共通の問題表示・解答エリア ---
 is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
 
+# --- 7. 共通の問題表示・解答エリア ---
+# ロック機能を撤廃し、すぐに問題を表示できるように修正
 if mode_select in ["学習モード", "復習モード"]:
-    if not is_unlocked:
-        st.warning("🚨 現在ロックされています。「分析・自戒」メニューから反省文を提出してください。")
-    elif st.session_state.test_pool:
+    if st.session_state.test_pool:
         st.divider()
         # 🚀 ナビゲーション
         q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
         selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
-        if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
-            st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
-            st.rerun()
-
-        # 📖 問題表示
-        curr = st.session_state.test_pool[0]
-        st.subheader(f"【{curr['field']}】 {curr['q_num']}")
+        
+        # ... (これより下の解答ボタン処理などはそのまま) ...
         
         # 解答ボタン
         cols = st.columns(6)
