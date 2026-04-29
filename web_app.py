@@ -691,7 +691,7 @@ elif mode_select == "分析ダッシュボード":
     
     try:
         # 目標期日データの読み込み
-        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=0)
+        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=10)
         
         # 現在の自分の設定があるか確認
         my_goal_row = goal_df[goal_df['user'] == current_user]
@@ -730,7 +730,7 @@ elif mode_select == "分析ダッシュボード":
 
     try:
         # 休日データの読み込み
-        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=0)
+        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=15)
         
         # 現在の自分の休日リストを取得
         my_holidays = holiday_df[holiday_df['user'] == current_user]['holiday_date'].tolist()
