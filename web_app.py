@@ -37,27 +37,43 @@ def send_line_notification(message):
         return False
 
 
-# 🌟 学習時間を記録する関数
-def update_study_time(current_user, elapsed_seconds):
+# 🌟 学習時間を記録する関数（分野別・重複防止・キャッシュ対策版）
+def update_study_time(current_user, elapsed_seconds, field="未分類"):
     if elapsed_seconds <= 0: return
     try:
-        df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=15)
+        # 強制的に最新の状態を読み込む (ttl=0)
+        df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=0)
         today_str = datetime.today().strftime('%Y-%m-%d')
         
-        mask = (df['user'] == current_user) & (df['date'] == today_str)
+        # 文字列として扱い、空欄を「未分類」で埋める（エラー防止）
+        if 'field' not in df.columns:
+            df['field'] = "未分類"
+        df['field'] = df['field'].fillna("未分類").astype(str)
+        df['user'] = df['user'].astype(str)
+        df['date'] = df['date'].astype(str)
+        
+        # 🌟 ここが重要：ユーザー、日付、さらに「分野」が【すべて一致】する行があるか探す
+        mask = (df['user'] == str(current_user)) & (df['date'] == today_str) & (df['field'] == str(field))
+        
         if mask.any():
-            # 既に今日の記録があれば加算
+            # 一致する行（同じユーザー・同じ日・同じ分野）があれば、その行に加算
             idx = df[mask].index[0]
-            current_sec = int(df.loc[idx, 'study_seconds']) if pd.notna(df.loc[idx, 'study_seconds']) else 0
-            df.loc[idx, 'study_seconds'] = current_sec + int(elapsed_seconds)
+            current_sec = pd.to_numeric(df.loc[idx, 'study_seconds'], errors='coerce')
+            if pd.isna(current_sec): current_sec = 0
+            df.loc[idx, 'study_seconds'] = int(current_sec + elapsed_seconds)
         else:
-            # 今日の最初の記録なら新規作成
-            new_row = pd.DataFrame([{'user': current_user, 'date': today_str, 'study_seconds': int(elapsed_seconds)}])
+            # 一致する行がなければ（新しい分野なら）、新しい行を一番下に追加
+            new_row = pd.DataFrame([{
+                'user': str(current_user), 
+                'date': today_str, 
+                'study_seconds': int(elapsed_seconds), 
+                'field': str(field)
+            }])
             df = pd.concat([df, new_row], ignore_index=True)
             
         conn.update(spreadsheet=target_url, worksheet="StudyTime", data=df)
     except Exception as e:
-        print(f"時間記録エラー: {e}")
+        st.error(f"時間記録エラー: {e}")
 
 # --- 2. ユーザー別個別設定 ---
 # メール通知廃止に伴い、email項目を削除しました
@@ -758,10 +774,34 @@ if mode_select in ["学習モード", "復習モード"]:
                 st.rerun()
                 
         with col_nav2:
-            # ⏹️ 学習終了ボタン（押した瞬間にそこまでの時間を保存して終了）
+            # ⏹️ 学習終了ボタン
             if st.button("⏹️ 学習終了", type="primary"):
                 elapsed = time.time() - st.session_state.last_action_time
-                update_study_time(current_user, elapsed)
+                
+                # 🌟 追加：今開いている問題から分野名を取得する
+                curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                
+                # 🌟 修正：第3引数に分野名を渡す！
+                update_study_time(current_user, elapsed, curr_field)
+                
+                st.session_state.test_pool = []
+                if "last_action_time" in st.session_state:
+                    del st.session_state["last_action_time"]
+                st.success("✅ 学習時間を記録して終了しました！お疲れ様です。")
+                time.sleep(2)
+                st.rerun()
+
+# ⏹️ 学習終了ボタン
+if st.button("⏹️ 学習終了", type="primary"):
+                elapsed = time.time() - st.session_state.last_action_time
+                
+                # 🌟 追加：今開いている問題から分野名を取得する
+                # もし問題が空なら「未分類」にする安全策付き
+                curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                
+                # 🌟 修正：第3引数に分野名を渡す！
+                update_study_time(current_user, elapsed, curr_field)
+                
                 st.session_state.test_pool = []
                 if "last_action_time" in st.session_state:
                     del st.session_state["last_action_time"]
