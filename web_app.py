@@ -758,7 +758,7 @@ elif mode_select == mono_label:
 if mode_select in ["学習モード", "復習モード"]:
     if st.session_state.get("test_pool"):
         
-        # ⏱️ タイマー開始（まだ計り始めていなければ現在時刻をセット）
+        # ⏱️ タイマー開始
         if "last_action_time" not in st.session_state:
             st.session_state.last_action_time = time.time()
             
@@ -777,29 +777,7 @@ if mode_select in ["学習モード", "復習モード"]:
             # ⏹️ 学習終了ボタン
             if st.button("⏹️ 学習終了", type="primary"):
                 elapsed = time.time() - st.session_state.last_action_time
-                
-                # 🌟 追加：今開いている問題から分野名を取得する
                 curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                
-                # 🌟 修正：第3引数に分野名を渡す！
-                update_study_time(current_user, elapsed, curr_field)
-                
-                st.session_state.test_pool = []
-                if "last_action_time" in st.session_state:
-                    del st.session_state["last_action_time"]
-                st.success("✅ 学習時間を記録して終了しました！お疲れ様です。")
-                time.sleep(2)
-                st.rerun()
-
-# ⏹️ 学習終了ボタン
-if st.button("⏹️ 学習終了", type="primary"):
-                elapsed = time.time() - st.session_state.last_action_time
-                
-                # 🌟 追加：今開いている問題から分野名を取得する
-                # もし問題が空なら「未分類」にする安全策付き
-                curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                
-                # 🌟 修正：第3引数に分野名を渡す！
                 update_study_time(current_user, elapsed, curr_field)
                 
                 st.session_state.test_pool = []
@@ -820,7 +798,7 @@ if st.button("⏹️ 学習終了", type="primary"):
                 
                 # 🌟 解答した瞬間に経過時間を自動保存！
                 elapsed = time.time() - st.session_state.last_action_time
-                update_study_time(current_user, elapsed)
+                update_study_time(current_user, elapsed, curr['field'])
                 st.session_state.last_action_time = time.time() # タイマーリセット
                 
                 # 履歴保存とデータ更新
@@ -830,7 +808,7 @@ if st.button("⏹️ 学習終了", type="primary"):
                 today_str = datetime.today().strftime('%Y-%m-%d')
                 st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
                 
-                # 🌟 ノルマ達成チェックとLINE通知（元のコードそのまま！）
+                # 🌟 ノルマ達成チェックとLINE通知
                 done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
                 if done_today == 20:
                     try:
