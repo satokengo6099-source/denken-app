@@ -3,15 +3,41 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import random
 from datetime import datetime, timedelta
-import smtplib
-from email.mime.text import MIMEText
-import os  # 🌟 これを追加
+import os  
+import requests
+import json
 
-# --- 1. ユーザー別個別設定（期日・問題リスト・形式） ---
+# --- 1. LINE通知用関数 ---
+# 🌟 LINE通知用関数（エラー詳細表示版）
+def send_line_notification(message):
+    import streamlit as st # 画面にエラーを出すために追加
+    try:
+        url = "https://api.line.me/v2/bot/message/broadcast"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {st.secrets['line_access_token']}"
+        }
+        payload = {
+            "messages": [{"type": "text", "text": message}]
+        }
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        
+        if response.status_code == 200:
+            return True
+        else:
+            # 🌟 エラーが起きたら画面に赤文字でLINEからの返答をそのまま出す！
+            st.error(f"🚨 LINE送信失敗！ コード: {response.status_code}\n理由: {response.text}")
+            return False
+            
+    except Exception as e:
+        st.error(f"🚨 根本的な通信エラー: {e}")
+        return False
+
+# --- 2. ユーザー別個別設定 ---
+# メール通知廃止に伴い、email項目を削除しました
 USER_CONFIG = {
     "佐藤": {
-        "email": "satokengo6099@gmail.com",
-        "deadline": datetime(2026, 6, 15).date(),
+        "deadline": datetime(2026, 8, 22).date(),
         "structure": [
             ("理論2023", "静電気", 15), ("理論2023", "磁気", 15), ("理論2023", "直流回路", 15),
             ("理論2023", "交流回路", 15), ("理論2023", "過渡現象", 15), ("理論2023", "電気計測", 15),
@@ -34,8 +60,7 @@ USER_CONFIG = {
         ]
     },
     "稲垣": {
-        "email": "inagaki@example.com", 
-        "deadline": datetime(2026, 7, 15).date(),
+        "deadline": datetime(2026, 9, 1).date(),
         "structure": [
             ("理論", "直流回路", 1, 24), ("理論", "静電気", 25, 50), ("理論", "電磁力", 51, 70),
             ("理論", "交流回路", 71, 107), ("理論", "三相交流回路", 108, 120), ("理論", "過渡現象とその他の波形", 121, 130),
@@ -54,8 +79,7 @@ USER_CONFIG = {
         ]
     },
     "風穴": {
-        "email": "26043017n@muroran-it.ac.jp", 
-        "deadline": datetime(2026, 7, 15).date(),
+        "deadline": datetime(2026, 10, 15).date(),
         "structure": [
             ("理論", "直流回路", 1, 24), ("理論", "静電気", 25, 50), ("理論", "電磁力", 51, 70),
             ("理論", "交流回路", 71, 107), ("理論", "三相交流回路", 108, 120), ("理論", "過渡現象とその他の波形", 121, 130),
@@ -75,166 +99,188 @@ USER_CONFIG = {
     }
 }
 
-# --- 2. データベース接続・型固定読み込み ---
+
+
+
+# --- 3. データベース接続・型固定読み込み ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
 def load_full_data():
+    """スプレッドシートから全データを読み込み、型を整える"""
     try:
-        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4])
+        # Sheet1（メインの学習記録）を読み込み
+        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4], ttl=0)
         df = df.dropna(how="all")
+        
+        # 型の強制固定（エラー防止）
         df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
-        df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>'], '')
+        df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
         for col in ['user', 'field', 'q_num']:
-            df[col] = df[col].astype(str)
+            df[col] = df[col].astype(str).str.strip()
+            
         return df
-    except:
+    except Exception as e:
+        st.error(f"データ読み込みエラー: {e}")
         return pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
 
 def sync_user_data(full_df, user_name):
+    """USER_CONFIGに基づいて未登録の問題を生成し、スプレッドシートを更新する"""
     user_df = full_df[full_df['user'] == user_name].copy()
+    # 既存の問題をセットで管理（重複チェック用）
     existing_q = set(user_df['field'] + "_" + user_df['q_num'])
+    
     structure = USER_CONFIG[user_name]["structure"]
     new_rows = []
+    
     for item in structure:
-        field, cat = str(item[0]), str(item[1])
-        start, end = (1, item[2]) if len(item) == 3 else (item[2], item[3])
+        field = str(item[0]) # 科目（例：理論2023）
+        cat = str(item[1])   # 分野（例：静電気）
+        
+        # 形式の判定（要素が3つなら問題数、4つなら開始-終了番号）
+        if len(item) == 3:
+            start, end = 1, item[2]
+        else:
+            start, end = item[2], item[3]
+            
         for i in range(start, end + 1):
             q_id = f"{cat}No{i}"
             if f"{field}_{q_id}" not in existing_q:
-                new_rows.append({"user": str(user_name), "field": field, "q_num": q_id, "level": 0, "last_date": ""})
+                new_rows.append({
+                    "user": str(user_name),
+                    "field": field,
+                    "q_num": q_id,
+                    "level": 0,
+                    "last_date": ""
+                })
+                
     if new_rows:
+        # 新しい問題を結合
         updated_user_df = pd.concat([user_df, pd.DataFrame(new_rows)], ignore_index=True)
+        # 他のユーザーのデータと合わせて全体を更新
         other_users = full_df[full_df['user'] != user_name]
         new_full = pd.concat([other_users, updated_user_df], ignore_index=True)
+        
+        # 保存前に型を再固定
         new_full['level'] = new_full['level'].astype(int)
+        new_full['last_date'] = new_full['last_date'].astype(str)
+        
         conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
         return updated_user_df
+        
     return user_df
 
 
-# --- 3. 精神攻撃メール送信機能 ---
-def send_daily_report(full_df):
-    try:
-        sender = "satokengo6099@gmail.com"
-        password = "wvht mzfv hiqh aefc"
-        
-        all_emails = [info.get("email") for info in USER_CONFIG.values() if info.get("email")]
-        receiver_str = ", ".join(all_emails) 
-        
-        yesterday_dt = (datetime.today() - timedelta(days=1)).date()
-        yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
-        display_date = yesterday_dt.strftime('%Y/%m/%d')
-        
-        body = f"⚠️ 【重要：学習怠慢者への警告】 {display_date} 進捗レポート\n" + "="*50 + "\n"
-        body += "※このメールは、昨日のあなたの『やる気』を客観的に評価したものです。\n" + "="*50 + "\n\n"
+# --- 4. 通知・レポート管理機能 ---
 
-        for user in USER_CONFIG.keys():
-            u_data = full_df[full_df['user'] == user]
-            
-            # 🌟 追加：最後に問題を解いた日を検索し、正確なサボり日数を計算
-            valid_dates = u_data[u_data['last_date'].astype(str).str.contains("-", na=False)]['last_date']
-            if not valid_dates.empty:
-                last_action_str = valid_dates.max()
-                last_action_date = datetime.strptime(last_action_str, '%Y-%m-%d').date()
-                slack_days = (yesterday_dt - last_action_date).days
+def generate_report_message(full_df):
+    """LINE送信用に精神攻撃レポートの本文を生成する"""
+    yesterday_dt = (datetime.today() - timedelta(days=1)).date()
+    yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
+    
+    msg = f"📢 【電験監獄：朝の進捗報告】\n{yesterday_dt.strftime('%m/%d')} の処刑結果です。\n"
+    msg += "="*15 + "\n"
+
+    for user in USER_CONFIG.keys():
+        u_data = full_df[full_df['user'] == user]
+        
+        # サボり日数の計算
+        valid_dates = u_data[u_data['last_date'].astype(str).str.contains("-", na=False)]['last_date']
+        if not valid_dates.empty:
+            last_action_str = valid_dates.max()
+            last_action_date = datetime.strptime(last_action_str, '%Y-%m-%d').date()
+            slack_days = (yesterday_dt - last_action_date).days
+        else:
+            slack_days = 999 
+
+        if slack_days < 0: slack_days = 0
+
+        # 昨日のスコア
+        y_data = u_data[u_data['last_date'] == yesterday_str]
+        done = len(y_data)
+        avg = pd.to_numeric(y_data['level'], errors='coerce').mean() if done > 0 else 0
+        
+        # 名前剥奪
+        display_name = f"【💀】{user}(敗北者)" if done == 0 and slack_days >= 3 else user
+
+        msg += f"👤 {display_name}\n📊 消化: {done}問 (平:{avg:.1f}点)\n"
+        
+        if done >= 20:
+            msg += "💬: 合格確実。サボるゴミ達を置いて高みへ行きましょう。\n"
+        elif done >= 1:
+            msg += "💬: 記念受験。その程度で勉強したつもりですか？\n"
+        else:
+            if slack_days >= 3:
+                days_text = f"{slack_days}日連続" if slack_days != 999 else "永遠に"
+                msg += f"💬: 敗北者。{days_text}0問。恥を知りなさい。\n"
             else:
-                slack_days = 999 # まだアプリを使い始めて1問も解いていない場合
+                msg += "💬: ゴミ。正気ですか？人生ごと不合格です。\n"
+        msg += "-"*10 + "\n"
+    
+    msg += "※不満なら今すぐ机に向かえ。"
+    return msg
 
-            if slack_days < 0:
-                slack_days = 0 # 日付を跨いで深夜に解いた場合などの保護
-
-            # 昨日のデータのみ抽出してスコア計算
-            y_data = u_data[u_data['last_date'] == yesterday_str]
-            done = len(y_data)
-            avg = pd.to_numeric(y_data['level'], errors='coerce').mean() if done > 0 else 0
-            
-            # 🌟 名前剥奪の判定
-            if done == 0 and slack_days >= 3:
-                display_name = f"【💀】{user}は己の怠慢さにより敗北しました"
-            else:
-                display_name = user
-
-            body += f"👤 利用者: {display_name}\n📊 消化数: {done}問 / 平均スコア: {avg:.1f}点\n"
-            
-            if done >= 20:
-                body += "💬 評価: 【合格確実】素晴らしい努力です。他の二人が口先だけでサボっている間に、あなたは着実に合格に近づいています。このまま彼らを見捨てて自分だけ高みへ登りましょう。\n"
-            elif done >= 10:
-                body += "💬 評価: 【不合格予備軍】可もなく不可もない、一番『落ちる』タイプです。その程度で満足ですか？明日もそのぬるま湯に浸かって、試験当日に絶望してください。\n"
-            elif done > 0:
-                body += "💬 評価: 【記念受験】たった数問で勉強したつもりですか？試験会場で恥をかくだけです。これ以上醜態を晒す前に、いっそ今すぐ辞めたらどうですか？\n"
-            else:
-                # 🌟 連続サボり日数（slack_days）に連動した専用メッセージ
-                if slack_days >= 3:
-                    if slack_days == 999:
-                        body += "💬 評価: 【完全なる敗北者】未だに1問も解いていませんね。電験への挑戦は、始まる前から己の怠慢という最大の敵の前に完全に敗れ去りました。哀れですね。\n"
-                    else:
-                        # 4日なら「4日連続で0問」、5日なら「5日連続で0問」と数字がカウントアップされる
-                        body += f"💬 評価: 【完全なる敗北者】{slack_days}日連続で0問。もはや言葉もありません。あなたの電験への挑戦は、己の怠慢という最大の敵の前に完全に敗れ去りました。哀れですね。\n"
-                else:
-                    body += "💬 評価: 【ゴミ】1問も解いていない？正気ですか？『合格したい』という言葉が聞いて呆れます。あなたの人生は無意味なゴミそのものです。恥を知りなさい。\n"
-            body += "-"*30 + "\n\n"
-        
-        body += "\n※不満があるなら、言い訳する前に今すぐ机に向かいなさい。\n"
-        msg = MIMEText(body)
-        msg["Subject"] = f"🚨【電験】昨日のレポート"
-        msg["From"], msg["To"] = sender, receiver_str
-        
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-            s.login(sender, password)
-            s.send_message(msg)
-        return True
-    except Exception as e:
-        st.error(f"メール送信失敗: {e}")
-        return False
-
-
-# 🌟 修正：アクセス過多（APIエラー）を防ぐため、1回のログインにつき1度だけチェックする
 def check_and_trigger_report():
-    # 既にチェック済みなら、スプレッドシートにアクセスせず即終了
+    """1日の各タイミング（朝の報告・22時警告）で通知を飛ばす"""
     if st.session_state.get("report_checked", False):
         return
 
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    now_hour = datetime.today().hour
+
+    # --- A. 朝の進捗レポート送信 ---
     try:
         sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=0)
         last_sent = str(sys_df.iloc[0, 0])
-    except: 
-        last_sent = "2000-01-01"
-    
-    today_str = datetime.today().strftime('%Y-%m-%d')
-    if last_sent != today_str:
-        try:
-            # 先に「今日送った」ことにする（他人の二重送信防止）
+        if last_sent != today_str:
+            # 更新処理
             conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
-            
             full_df = load_full_data()
-            if send_daily_report(full_df):
-                st.toast("昨日のレポートを送信しました📩")
-            else:
-                # 失敗したら戻す
-                conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[last_sent]], columns=["last_report_date"]))
+            report_msg = generate_report_message(full_df)
+            if send_line_notification(report_msg):
+                st.toast("LINEへ進捗レポートを送信しました📩")
+    except: pass
+
+    # --- B. 22時の未完了警告送信 ---
+    if now_hour >= 22:
+        try:
+            # TaskLogsシートから今日の警告が送信済みか確認
+            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=0)
+            warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '22h_warning')]
+            
+            if warning_sent.empty:
+                full_df = load_full_data()
+                unfinished = []
+                for user in USER_CONFIG.keys():
+                    done_today = len(full_df[(full_df['user'] == user) & (full_df['last_date'] == today_str)])
+                    if done_today < 20:
+                        unfinished.append(f"・{user} (現在{done_today}問)")
+                
+                if unfinished:
+                    warn_msg = "🚨 【緊急警告：22時】\n以下の怠慢者がノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\n日付が変わる前に地獄の底から這い上がってきなさい。"
+                    if send_line_notification(warn_msg):
+                        new_log = pd.DataFrame([[today_str, "system", "22h_warning"]], columns=["date", "user", "type"])
+                        # 既存ログと結合して更新
+                        updated_logs = pd.concat([logs, new_log], ignore_index=True)
+                        conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
         except Exception as e:
-            st.error(f"レポート処理中にエラーが発生しました: {e}")
-    
-    # 無事にチェックが終わったらフラグを立てる（以降はボタンを押しても無視される）
+            print(f"22時警告エラー: {e}")
+
     st.session_state["report_checked"] = True
-# 🌟 既読チェック用の関数
+
 def check_unread_monologue(current_user):
+    """独り言掲示板の未読があるかチェック"""
     try:
-        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues")
-        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus")
+        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=0)
         
-        # 自分の最終既読時間を取得
         user_status = status_df[status_df['user'] == current_user]
-        if user_status.empty:
+        if user_status.empty or mono_df.empty:
             return False
             
         last_read = pd.to_datetime(user_status['last_read_at'].iloc[0])
-        
-        # 投稿データを日付型にして比較
         mono_df['date_dt'] = pd.to_datetime(mono_df['date'], errors='coerce')
         
-        # 自分以外の新しい投稿があるか
         new_posts = mono_df[
             (mono_df['user'] != current_user) & 
             (mono_df['date_dt'] > last_read)
@@ -243,39 +289,26 @@ def check_unread_monologue(current_user):
     except:
         return False
 
-# --- 4. UI構築・メインロジック ---
-st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
-check_and_trigger_report()
 
-# --- ユーザー選択とデータ読み込み管理 ---
-current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()), key="user_selector")
-target_date = USER_CONFIG[current_user]["deadline"]
+# --- 5. メニュー切り替えとサイドバー（通知・進捗） ---
 
-if 'last_user' not in st.session_state or st.session_state.last_user != current_user:
-    with st.spinner(f"{current_user}さんのデータを読み込み中..."):
-        full_data = load_full_data()
-        st.session_state.db = sync_user_data(full_data, current_user)
-        st.session_state.last_user = current_user
-        st.session_state.test_pool = []
-        st.session_state.history = []
-
-if "db" in st.session_state:
-    db = st.session_state.db
-else:
-    st.stop() 
-
-# --- メニュー切り替え ---
+# 独り言の未読チェック
 has_unread = check_unread_monologue(current_user)
 mono_label = "ただの独り言 🔴" if has_unread else "ただの独り言"
 
 st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
 
-# --- 📅 試験日カウントダウン＆進捗（サイドバー） ---
-# 🌟 本試験の日付（必要に応じて書き換えてください。例は2026年9月6日）
+# 📅 試験日カウントダウンと進捗計算
+# 🌟 本試験の日付（2026年8月30日に設定しています）
 EXAM_DATE = datetime(2026, 8, 30).date() 
-
 today_dt = datetime.today().date()
+
+# 今日の進捗（LINE通知判定用にも使う）
+today_str = today_dt.strftime('%Y-%m-%d')
+done_today_count = len(db[db['last_date'] == today_str])
+
+# 全体進捗の計算
 unstarted_list = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
 total_count = len(db)
 answered_count = total_count - len(unstarted_list)
@@ -285,13 +318,13 @@ st.sidebar.divider()
 # 1. 本試験までのカウントダウン
 st.sidebar.metric("🔥 試験日まであと", f"{max(0, (EXAM_DATE - today_dt).days)}日")
 
-# 2. 各自の目標期日と進捗
+# 2. 各自の目標期日と進捗バー
 st.sidebar.metric("個人の目標期日まで", f"{max(0, (target_date - today_dt).days)}日")
 st.sidebar.progress(answered_count / total_count if total_count > 0 else 0)
 st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({answered_count/total_count*100:.1f}%)")
+st.sidebar.write(f"📊 本日のノルマ: **{done_today_count} / 20**")
 
-# --- ✍️ モチベーションメッセージ ---
-# 少し余白を空けて下部に配置
+# --- ✍️ モチベーションメッセージ（明朝体・イタリックデザイン） ---
 st.sidebar.markdown("<br><br><br>", unsafe_allow_html=True)
 st.sidebar.markdown("""
     <div style="text-align: center; color: #555; padding: 10px; border-top: 1px solid #ddd;">
@@ -305,12 +338,10 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 
-
-# --- メインコンテンツの分岐 ---
+# --- 6. メインコンテンツの分岐 ---
 if mode_select == "学習モード":
     st.title(f"⚡ 学習：{current_user}")
     fields = ["すべて"] + list(db['field'].unique())
-    # 👇 インデントを修正しました
     selected_field = st.selectbox("分野を選択", fields, key="field_selector")
     pool = [q for q in unstarted_list if selected_field == "すべて" or q["field"] == selected_field]
     
@@ -372,7 +403,6 @@ elif mode_select == "分析ダッシュボード":
         total = len(u_df)
         
         if total > 0:
-            # 🌟 究極のフィルター：「-（ハイフン）」が含まれているか（日付形式か）だけで判定する
             valid_done = u_df[u_df['last_date'].astype(str).str.contains("-", na=False)]
             done = len(valid_done)
             rate = round((done / total) * 100, 1)
@@ -399,8 +429,6 @@ elif mode_select == "分析ダッシュボード":
 
             u_df['単元'] = u_df['q_num'].str.split('No').str[0]
             u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-            
-            # 🌟 ここもハイフン判定に統一
             u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
             
             u_res = u_df.groupby(['field', '単元']).agg(
@@ -410,7 +438,6 @@ elif mode_select == "分析ダッシュボード":
             ).reset_index()
             
             u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
-            
             worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
             
             if not worst.empty:
@@ -430,7 +457,7 @@ elif mode_select == mono_label:
     except Exception as e:
         st.error(f"既読状態の更新に失敗しました。ReadStatusシートを確認してください。")
 
-# 投稿フォーム
+    # 投稿フォーム（🌟 ダブっていたものを1つに統一し、LINE通知付きのものを残しました）
     with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
         note_content = st.text_area("内容（Markdown対応）")
         uploaded_file = st.file_uploader("資料をアップロード", type=['pdf', 'png', 'jpg', 'jpeg'])
@@ -438,24 +465,25 @@ elif mode_select == mono_label:
         if st.button("投稿する"):
             if note_content:
                 f_name = ""
-                # 🌟 追加：ファイル本体をサーバーの「uploads」フォルダに保存する
                 if uploaded_file:
                     f_name = uploaded_file.name
-                    os.makedirs("uploads", exist_ok=True) # フォルダが無ければ作る
+                    os.makedirs("uploads", exist_ok=True)
                     file_path = os.path.join("uploads", f_name)
                     with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer()) # ファイル本体を保存
+                        f.write(uploaded_file.getbuffer())
                 
                 new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], 
                                        columns=["date", "user", "content", "file_name"])
                 try:
-                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues")
-                    if not old_mono.empty:
-                        updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
-                    else:
-                        updated_mono = new_mono
+                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
+                    updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
                     conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
-                    st.success("投稿しました。")
+                    
+                    # LINE通知
+                    line_msg = f"💬 【新着：独り言】\n{current_user}さんが新しいメッセージを投稿しました。\n\n内容：\n{note_content[:50]}{'...' if len(note_content) > 50 else ''}"
+                    send_line_notification(line_msg)
+                    
+                    st.success("投稿しました。メンバーに通知を送信しました。")
                     st.rerun()
                 except Exception as e:
                     st.error(f"送信に失敗しました: {e}")
@@ -464,7 +492,6 @@ elif mode_select == mono_label:
     st.divider()
     try:
         display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
-        
         if not display_mono.empty:
             display_mono.columns = display_mono.columns.str.strip()
             display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
@@ -477,22 +504,14 @@ elif mode_select == mono_label:
                     st.write(f"**{m.user}** ({d_show})")
                     st.markdown(m.content)
                     
-                    # 🌟 追加：保存したファイルを読み込んで表示・ダウンロードさせる
                     if hasattr(m, 'file_name') and str(m.file_name) != "nan" and m.file_name:
                         file_path = os.path.join("uploads", m.file_name)
-                        
-                        # ファイルが実際にサーバー上に存在するかチェック
                         if os.path.exists(file_path):
-                            # 画像ならそのまま表示
                             if m.file_name.lower().endswith(('.png', '.jpg', '.jpeg')):
                                 st.image(file_path, caption=m.file_name, use_container_width=True)
-                            # PDFなどならダウンロードボタンを表示
                             else:
                                 with open(file_path, "rb") as f:
-                                    st.download_button(label=f"📥 {m.file_name} をダウンロード", 
-                                                       data=f, 
-                                                       file_name=m.file_name,
-                                                       mime="application/pdf")
+                                    st.download_button(label=f"📥 {m.file_name} をダウンロード", data=f, file_name=m.file_name, mime="application/pdf")
                         else:
                             st.caption(f"📎 添付資料: {m.file_name} (※ファイル本体が見つかりません)")
         else:
@@ -500,7 +519,7 @@ elif mode_select == mono_label:
     except Exception as e:
         st.error(f"表示エラー: {e}")
 
-# --- 4. 共通の問題表示・解答エリア ---
+# --- 7. 共通の問題表示・解答エリア ---
 is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
 
 if mode_select in ["学習モード", "復習モード"]:
@@ -510,8 +529,6 @@ if mode_select in ["学習モード", "復習モード"]:
         st.divider()
         # 🚀 ナビゲーション
         q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
-        
-        # 👇 順番とインデントを修正しました
         selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
         if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
             st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
@@ -525,9 +542,31 @@ if mode_select in ["学習モード", "復習モード"]:
         cols = st.columns(6)
         for i in range(6):
             if cols[i].button(f"{i}点", key=f"b{i}"):
+                # 履歴保存とデータ更新
                 st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
                 idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
-                st.session_state.db.loc[idx, ['level', 'last_date']] = [i, datetime.today().strftime('%Y-%m-%d')]
+                
+                today_str = datetime.today().strftime('%Y-%m-%d')
+                st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
+                
+                # 🌟 追加：ノルマ達成チェックとLINE通知
+                done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
+                if done_today == 20:
+                    try:
+                        logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=0)
+                        already_sent = logs[(logs['date'] == today_str) & 
+                                            (logs['user'] == current_user) & 
+                                            (logs['type'] == 'completed')]
+                        if already_sent.empty:
+                            msg = f"✅ 【速報】\n{current_user}が本日のノルマ(20問)を達成しました！\n\n彼は自由の身です。まだ終わっていない他のメンバーは、猛烈に自分を恥じなさい。"
+                            if send_line_notification(msg):
+                                new_log = pd.DataFrame([[today_str, current_user, "completed"]], columns=["date", "user", "type"])
+                                conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
+                                st.toast("🎉 ノルマ達成をLINEで通知しました！")
+                    except Exception as e:
+                        print(f"達成通知エラー: {e}")
+
+                # 全体保存して次へ
                 full = load_full_data()
                 conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
                 st.session_state.test_pool.pop(0)
