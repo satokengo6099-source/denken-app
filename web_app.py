@@ -524,6 +524,82 @@ elif mode_select == "分析ダッシュボード":
     except Exception as e:
         st.error(f"学習時間データの読み込みエラー: {e}")
 
+# ==========================================
+    # 👤 個人専用ダッシュボード
+    # ==========================================
+    st.divider()
+    st.header(f"👤 {current_user} 専用ダッシュボード")
+    st.caption("※このデータはあなたしか見ることができません。")
+
+    # --- 🎯 1. 分野・単元別の正解率（理解度） ---
+    st.subheader("🎯 分野・単元別の正解率（理解度）")
+    user_db = full_df_ana[full_df_ana['user'] == current_user].copy()
+    
+    # 一度でも解いたことのある問題を抽出
+    attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
+
+    if not attempted.empty:
+        # 5点満点としてパーセンテージ(%)に変換
+        attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
+        attempted['accuracy'] = (attempted['level'] / 5.0) * 100
+        
+        col_p1, col_p2 = st.columns(2)
+        
+        with col_p1:
+            st.markdown("##### 📚 分野別の理解度")
+            field_acc = attempted.groupby('field')['accuracy'].mean().reset_index()
+            chart_field = alt.Chart(field_acc).mark_bar(opacity=0.8).encode(
+                x=alt.X('field', title='分野'),
+                y=alt.Y('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                color=alt.Color('field', legend=None, scale=alt.Scale(scheme='set2')),
+                tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+            ).properties(height=300)
+            st.altair_chart(chart_field, use_container_width=True)
+            
+        with col_p2:
+            st.markdown("##### 📖 単元別の理解度")
+            if 'unit' in attempted.columns:  # unit列が存在するかチェック
+                unit_acc = attempted.groupby('unit')['accuracy'].mean().reset_index()
+                # 単元別は横棒グラフの方が見やすい
+                chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
+                    x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y('unit', title='単元', sort='-x'), # 理解度が高い順に並べる
+                    color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
+                    tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+                ).properties(height=300)
+                st.altair_chart(chart_unit, use_container_width=True)
+            else:
+                st.warning("⚠️ スプレッドシートに「unit（単元）」列がないため表示できません。")
+    else:
+        st.info("まだ解答データがありません。")
+
+    # --- ⏱️ 2. 分野別の学習時間 ---
+    st.subheader("⏱️ 分野別の学習時間 (累計)")
+    if 'time_df' in locals() and not time_df.empty:
+        user_time = time_df[time_df['user'] == current_user].copy()
+        
+        # 新しく追加した field 列があるかチェック
+        if 'field' in user_time.columns and not user_time.empty:
+            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
+            # 0分のデータは除外
+            field_time = field_time[field_time['study_minutes'] > 0]
+            
+            if not field_time.empty:
+                # ドーナツ型の円グラフで比率を可視化
+                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta(field="study_minutes", type="quantitative"),
+                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
+                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+                ).properties(height=300)
+                st.altair_chart(chart_time, use_container_width=True)
+            else:
+                st.info("分野別の時間データがまだ蓄積されていません。")
+        else:
+            st.info("分野別の時間データがまだ蓄積されていません。（今後記録されます）")
+    else:
+        st.info("時間データがありません。")
+
+
     # 🚩 各ユーザーの苦手単元ワースト
     st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
     
