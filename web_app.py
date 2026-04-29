@@ -220,7 +220,7 @@ def generate_report_message(full_df):
     yesterday_dt = (datetime.today() - timedelta(days=1)).date()
     yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
     
-    # 🌟 追加：休日データの読み込み（通信エラー対策で空のDFも用意）
+    # 🌟 休日データの読み込み
     try:
         h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
     except:
@@ -314,7 +314,7 @@ def check_and_trigger_report():
             if warning_sent.empty:
                 full_df = load_full_data()
                 
-                # 🌟 追加：休日データの読み込み
+                # 🌟 休日データの読み込み
                 try:
                     h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
                 except:
@@ -343,6 +343,27 @@ def check_and_trigger_report():
             print(f"22時警告エラー: {e}")
 
     st.session_state["report_checked"] = True
+
+def check_unread_monologue(current_user):
+    """独り言掲示板の未読があるかチェック"""
+    try:
+        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=15)
+        
+        user_status = status_df[status_df['user'] == current_user]
+        if user_status.empty or mono_df.empty:
+            return False
+            
+        last_read = pd.to_datetime(user_status['last_read_at'].iloc[0])
+        mono_df['date_dt'] = pd.to_datetime(mono_df['date'], errors='coerce')
+        
+        new_posts = mono_df[
+            (mono_df['user'] != current_user) & 
+            (mono_df['date_dt'] > last_read)
+        ]
+        return len(new_posts) > 0
+    except:
+        return False
 
 # --- 4. UI構築・メインロジック ---
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
