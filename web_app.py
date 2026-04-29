@@ -289,12 +289,44 @@ def check_unread_monologue(current_user):
     except:
         return False
 
+# --- 4. UI構築・メインロジック ---
+st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
+
+# ⚠️ current_user をここで一番最初に定義する！
+current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()), key="user_selector")
+target_date = USER_CONFIG[current_user]["deadline"]
+
+# データの読み込み
+if 'last_user' not in st.session_state or st.session_state.last_user != current_user:
+    with st.spinner(f"{current_user}さんのデータを読み込み中..."):
+        full_data = load_full_data()
+        st.session_state.db = sync_user_data(full_data, current_user)
+        st.session_state.last_user = current_user
+        st.session_state.test_pool = []
+        st.session_state.history = []
+
+if "db" in st.session_state:
+    db = st.session_state.db
+else:
+    st.stop()
+
+# レポートと警告のチェック
+check_and_trigger_report()
+
+# ==========================================
+# 👇 ここから「5. メニュー切り替え」に続く
+# ==========================================
 
 # --- 5. メニュー切り替えとサイドバー（通知・進捗） ---
 
 # 独り言の未読チェック
 has_unread = check_unread_monologue(current_user)
 mono_label = "ただの独り言 🔴" if has_unread else "ただの独り言"
+
+st.sidebar.divider()
+mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
+
+# (以下、今のコードが続く...)
 
 st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
