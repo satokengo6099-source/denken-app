@@ -41,7 +41,7 @@ def send_line_notification(message):
 def update_study_time(current_user, elapsed_seconds, field="未分類"):
     if elapsed_seconds <= 0: return
     try:
-        # 強制的に最新の状態を読み込む (ttl=0)
+        # 強制的に最新の状態を読み込む (ttl=10)
         df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=0)
         today_str = datetime.today().strftime('%Y-%m-%d')
         
