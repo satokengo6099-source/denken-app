@@ -220,10 +220,31 @@ def generate_report_message(full_df):
     yesterday_dt = (datetime.today() - timedelta(days=1)).date()
     yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
     
-    msg = f"📢 【電験監獄：朝の進捗報告】\n{yesterday_dt.strftime('%m/%d')} の処刑結果です。\n"
+    # 🌟 追加：休日データの読み込み（通信エラー対策で空のDFも用意）
+    try:
+        h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+    except:
+        h_df = pd.DataFrame(columns=['user', 'holiday_date'])
+    
+    msg = f"📢 【電験：朝の進捗報告】\n{yesterday_dt.strftime('%m/%d')} の結果です。\n"
     msg += "="*15 + "\n"
 
     for user in USER_CONFIG.keys():
+        # 🌟 休日判定：昨日はお休みだったか？
+        is_holiday = False
+        if not h_df.empty and 'user' in h_df.columns:
+            user_holidays = h_df[h_df['user'] == user]['holiday_date'].tolist()
+            if yesterday_str in user_holidays:
+                is_holiday = True
+        
+        # ☕ 休日の場合の特別処理（煽りをスキップ）
+        if is_holiday:
+            msg += f"👤 {user}\n"
+            msg += f"💬: リフレッシュ休暇中 ☕\n"
+            msg += "-"*10 + "\n"
+            continue  # これ以降のサボり計算や煽り文言をスキップして次の人へ！
+
+        # --- 以下、通常の処理（煽りあり） ---
         u_data = full_df[full_df['user'] == user]
         
         # サボり日数の計算
@@ -292,8 +313,21 @@ def check_and_trigger_report():
             
             if warning_sent.empty:
                 full_df = load_full_data()
+                
+                # 🌟 追加：休日データの読み込み
+                try:
+                    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+                except:
+                    h_df = pd.DataFrame(columns=['user', 'holiday_date'])
+
                 unfinished = []
                 for user in USER_CONFIG.keys():
+                    # 🌟 休日判定：今日が休みの人は、未達成リストに入れない（免除）
+                    if not h_df.empty and 'user' in h_df.columns:
+                        user_holidays = h_df[h_df['user'] == user]['holiday_date'].tolist()
+                        if today_str in user_holidays:
+                            continue  # 休みなのでスキップ
+                    
                     done_today = len(full_df[(full_df['user'] == user) & (full_df['last_date'] == today_str)])
                     if done_today < 20:
                         unfinished.append(f"・{user} (現在{done_today}問)")
@@ -309,27 +343,6 @@ def check_and_trigger_report():
             print(f"22時警告エラー: {e}")
 
     st.session_state["report_checked"] = True
-
-def check_unread_monologue(current_user):
-    """独り言掲示板の未読があるかチェック"""
-    try:
-        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
-        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=15)
-        
-        user_status = status_df[status_df['user'] == current_user]
-        if user_status.empty or mono_df.empty:
-            return False
-            
-        last_read = pd.to_datetime(user_status['last_read_at'].iloc[0])
-        mono_df['date_dt'] = pd.to_datetime(mono_df['date'], errors='coerce')
-        
-        new_posts = mono_df[
-            (mono_df['user'] != current_user) & 
-            (mono_df['date_dt'] > last_read)
-        ]
-        return len(new_posts) > 0
-    except:
-        return False
 
 # --- 4. UI構築・メインロジック ---
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
@@ -389,7 +402,7 @@ try:
 except:
     personal_target_date = EXAM_DATE
 
-# --- 📅 2. 休日を除いた「実質残り日数」の計算 ---
+# --- 📅 2. 休日を除いた「実質残り日数」の計算 と 休日LINE通知 ---
 try:
     h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
     my_h_list = h_df[h_df['user'] == current_user]['holiday_date'].tolist()
@@ -400,7 +413,28 @@ try:
     # 休日を除外（勉強する日だけを残す）
     active_study_days = [d for d in total_days_range if d.strftime('%Y-%m-%d') not in my_h_list]
     net_days_left = len(active_study_days)
-except:
+    
+    # 🌟 追加：今日が休みの日なら、アプリを開いた瞬間にLINEで1回だけ優しく通知する
+    today_str = today_dt.strftime('%Y-%m-%d')
+    if today_str in my_h_list:
+        try:
+            # 重複送信を防ぐためにログを確認
+            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=15)
+            already_sent = logs[(logs['date'] == today_str) & 
+                                (logs['user'] == current_user) & 
+                                (logs['type'] == 'holiday')]
+            if already_sent.empty:
+                # ☕ 優しいメッセージを送信（煽り一切なし！）
+                msg = f"☕ 【お知らせ】\n{current_user}は今日、勉強おやすみです。\n\nたまには休息も必要ですね。しっかりリフレッシュしてください！"
+                
+                if send_line_notification(msg):
+                    # 送信履歴を記録して、今日2回目以降は送らないようにする
+                    new_log = pd.DataFrame([[today_str, current_user, "holiday"]], columns=["date", "user", "type"])
+                    conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
+        except Exception as e:
+            print(f"休日通知エラー: {e}")
+
+except Exception as e:
     net_days_left = max(1, (personal_target_date - today_dt).days)
 
 # --- 📊 3. 進捗とノルマの計算 ---
