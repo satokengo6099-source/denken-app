@@ -374,47 +374,66 @@ mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", 
 EXAM_DATE = datetime(2026, 8, 30).date() 
 today_dt = datetime.today().date()
 
-# --- 🎯 修正ポイント：個人の目標期日をスプレッドシートから取得 ---
+import math # 👈 自動計算の切り上げ(ceil)に使うため追加
+
+# --- 🎯 1. 個人の目標期日をスプレッドシートから取得 ---
 try:
-    # GoalDatesシートから全ユーザーの目標日を読み込む
     goal_df_sidebar = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=60)
-    
-    # 今ログインしているユーザーの行だけを抽出
     user_goal_row = goal_df_sidebar[goal_df_sidebar['user'] == current_user]
     
     if not user_goal_row.empty:
-        # スプレッドシートに保存されている日付を読み込む
         goal_date_str = user_goal_row.iloc[0]['goal_date']
         personal_target_date = datetime.strptime(goal_date_str, '%Y-%m-%d').date()
     else:
-        # 設定がない場合は、とりあえず本試験日をデフォルトにする
         personal_target_date = EXAM_DATE
 except:
-    # エラー（シートがない等）の場合は本試験日を表示
     personal_target_date = EXAM_DATE
 
-# 今日の進捗
+# --- 📅 2. 休日を除いた「実質残り日数」の計算 ---
+try:
+    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+    my_h_list = h_df[h_df['user'] == current_user]['holiday_date'].tolist()
+    
+    # 今日から目標期日までの全日程
+    total_days_range = [(today_dt + timedelta(days=i)) for i in range((personal_target_date - today_dt).days + 1)]
+    
+    # 休日を除外（勉強する日だけを残す）
+    active_study_days = [d for d in total_days_range if d.strftime('%Y-%m-%d') not in my_h_list]
+    net_days_left = len(active_study_days)
+except:
+    net_days_left = max(1, (personal_target_date - today_dt).days)
+
+# --- 📊 3. 進捗とノルマの計算 ---
 today_str = today_dt.strftime('%Y-%m-%d')
 done_today_count = len(db[db['last_date'] == today_str])
 
-# 全体進捗
 unstarted_list = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
 total_count = len(db)
 answered_count = total_count - len(unstarted_list)
+
+# 残り問題数と1日あたりの必要数（自動計算）
+remaining_questions = total_count - answered_count
+daily_pace = math.ceil(remaining_questions / net_days_left) if net_days_left > 0 else remaining_questions
 
 st.sidebar.divider()
 
 # 1. 本試験までのカウントダウン（全員共通）
 st.sidebar.metric("🔥 本試験まであと", f"{max(0, (EXAM_DATE - today_dt).days)}日")
 
-# 2. 個人の目標期日（ユーザーごとに可変！）
+# 2. 個人の目標期日と実質稼働日（ユーザーごとに可変！）
 days_left_personal = (personal_target_date - today_dt).days
-st.sidebar.metric(f"🏁 {current_user}の目標まで", f"{max(0, days_left_personal)}日")
+st.sidebar.metric(
+    label=f"🏁 {current_user}の目標まで", 
+    value=f"{max(0, days_left_personal)}日",
+    delta=f"実質勉強日: {net_days_left}日", 
+    delta_color="normal"
+)
 
 st.sidebar.progress(answered_count / total_count if total_count > 0 else 0)
 st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({answered_count/total_count*100:.1f}%)")
-st.sidebar.write(f"📊 本日のノルマ: **{done_today_count} / 20**")
 
+# 🌟 本日のノルマが「固定の20問」から「カレンダーに基づく自動計算」に進化！
+st.sidebar.write(f"📊 本日のノルマ: **{done_today_count} / {daily_pace}** 問")
 # --- ✍️ モチベーションメッセージ（明朝体・イタリックデザイン） ---
 st.sidebar.markdown("<br><br><br>", unsafe_allow_html=True)
 st.sidebar.markdown("""
@@ -705,6 +724,45 @@ elif mode_select == "分析ダッシュボード":
         st.error(f"目標期日の読み込みエラー: {e}")
     
     st.divider()
+
+    st.divider()
+    st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
+
+    try:
+        # 休日データの読み込み
+        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=0)
+        
+        # 現在の自分の休日リストを取得
+        my_holidays = holiday_df[holiday_df['user'] == current_user]['holiday_date'].tolist()
+        my_holidays_dt = [datetime.strptime(d, '%Y-%m-%d').date() for d in my_holidays]
+
+        # 複数選択可能なカレンダーUI
+        selected_holidays = st.date_input(
+            "勉強しない日を選択してください（複数選択可）",
+            value=my_holidays_dt,
+            help="カレンダーでクリックして追加・削除できます"
+        )
+
+        if st.button("休日設定を保存する"):
+            # 選択された日付を文字列リストに変換
+            new_holidays_str = [d.strftime('%Y-%m-%d') for d in selected_holidays]
+            
+            # 他のユーザーのデータは残し、自分のデータだけ入れ替える
+            other_users_holidays = holiday_df[holiday_df['user'] != current_user]
+            new_my_holidays = pd.DataFrame({
+                'user': [current_user] * len(new_holidays_str),
+                'holiday_date': new_holidays_str
+            })
+            
+            updated_holiday_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
+            
+            # スプレッドシート更新
+            conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_holiday_df)
+            st.success("休日設定を更新しました！これに基づき残り必要問題数が再計算されます。")
+            st.rerun()
+
+    except Exception as e:
+        st.error(f"休日設定の読み込みエラー: {e}")
 
 
     # 🚩 各ユーザーの苦手単元ワースト
