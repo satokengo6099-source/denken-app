@@ -556,39 +556,7 @@ elif mode_select == "分析ダッシュボード":
             ).properties(height=300)
             st.altair_chart(chart_field, use_container_width=True)
             
-# ==========================================
-    # 👤 個人専用ダッシュボード
-    # ==========================================
-    st.divider()
-    st.header(f"👤 {current_user} 専用ダッシュボード")
-    st.caption("※このデータはあなたしか見ることができません。")
-
-    # --- 🎯 1. 分野・単元別の正解率（理解度） ---
-    st.subheader("🎯 分野・単元別の正解率（理解度）")
-    user_db = full_df_ana[full_df_ana['user'] == current_user].copy()
-    
-    # 一度でも解いたことのある問題を抽出
-    attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
-
-    if not attempted.empty:
-        # 5点満点としてパーセンテージ(%)に変換
-        attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
-        attempted['accuracy'] = (attempted['level'] / 5.0) * 100
-        
-        col_p1, col_p2 = st.columns(2)
-        
-        with col_p1:
-            st.markdown("##### 📚 分野別の理解度")
-            field_acc = attempted.groupby('field')['accuracy'].mean().reset_index()
-            chart_field = alt.Chart(field_acc).mark_bar(opacity=0.8).encode(
-                x=alt.X('field', title='分野'),
-                y=alt.Y('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                color=alt.Color('field', legend=None, scale=alt.Scale(scheme='set2')),
-                tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-            ).properties(height=300)
-            st.altair_chart(chart_field, use_container_width=True)
-            
-with col_p2:
+        with col_p2:
             st.markdown("##### 📖 分野ごとの単元別理解度")
             # 🌟 魔法のコード：q_numから「No」の前半だけを自動抽出！
             attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
@@ -600,7 +568,7 @@ with col_p2:
             for field_name in unique_fields:
                 st.markdown(f"###### 📘 {field_name}")
                 
-                # その分野（例：理論）だけのデータを抽出して集計
+                # その分野だけのデータを抽出して集計
                 field_data = attempted[attempted['field'] == field_name]
                 unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
                 
@@ -616,6 +584,32 @@ with col_p2:
                 
     else:
         st.info("まだ解答データがありません。問題を解くと分析が表示されます。")
+
+    # --- ⏱️ 2. 分野別の学習時間 ---
+    st.subheader("⏱️ 分野別の学習時間 (累計)")
+    if 'time_df' in locals() and not time_df.empty:
+        user_time = time_df[time_df['user'] == current_user].copy()
+        
+        # 新しく追加した field 列があるかチェック
+        if 'field' in user_time.columns and not user_time.empty:
+            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
+            # 0分のデータは除外
+            field_time = field_time[field_time['study_minutes'] > 0]
+            
+            if not field_time.empty:
+                # ドーナツ型の円グラフで比率を可視化
+                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta(field="study_minutes", type="quantitative"),
+                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
+                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+                ).properties(height=300)
+                st.altair_chart(chart_time, use_container_width=True)
+            else:
+                st.info("分野別の時間データがまだ蓄積されていません。")
+        else:
+            st.info("分野別の時間データがまだ蓄積されていません。（今後記録されます）")
+    else:
+        st.info("時間データがありません。")
 
     # --- ⏱️ 2. 分野別の学習時間 ---
     st.subheader("⏱️ 分野別の学習時間 (累計)")
