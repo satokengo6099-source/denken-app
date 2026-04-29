@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import os  
 import requests
 import json
+import time
 
 # 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
@@ -33,6 +34,29 @@ def send_line_notification(message):
         st.error(f"🚨 根本的な通信エラー: {e}")
         st.stop()
         return False
+
+
+# 🌟 学習時間を記録する関数
+def update_study_time(current_user, elapsed_seconds):
+    if elapsed_seconds <= 0: return
+    try:
+        df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=15)
+        today_str = datetime.today().strftime('%Y-%m-%d')
+        
+        mask = (df['user'] == current_user) & (df['date'] == today_str)
+        if mask.any():
+            # 既に今日の記録があれば加算
+            idx = df[mask].index[0]
+            current_sec = int(df.loc[idx, 'study_seconds']) if pd.notna(df.loc[idx, 'study_seconds']) else 0
+            df.loc[idx, 'study_seconds'] = current_sec + int(elapsed_seconds)
+        else:
+            # 今日の最初の記録なら新規作成
+            new_row = pd.DataFrame([{'user': current_user, 'date': today_str, 'study_seconds': int(elapsed_seconds)}])
+            df = pd.concat([df, new_row], ignore_index=True)
+            
+        conn.update(spreadsheet=target_url, worksheet="StudyTime", data=df)
+    except Exception as e:
+        print(f"時間記録エラー: {e}")
 
 # --- 2. ユーザー別個別設定 ---
 # メール通知廃止に伴い、email項目を削除しました
@@ -534,22 +558,38 @@ elif mode_select == mono_label:
             st.info("まだ投稿がありません。最初の独り言をどうぞ。")
     except Exception as e:
         st.error(f"表示エラー: {e}")
-
 # --- 7. 共通の問題表示・解答エリア ---
-is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
 if mode_select in ["学習モード", "復習モード"]:
     if st.session_state.get("test_pool"):
+        
+        # ⏱️ タイマー開始（まだ計り始めていなければ現在時刻をセット）
+        if "last_action_time" not in st.session_state:
+            st.session_state.last_action_time = time.time()
+            
         st.divider()
         
-        # 🚀 ナビゲーション
-        q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
-        selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
-        
-        if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
-            st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
-            st.rerun()
+        # 🚀 ナビゲーションと「学習終了」ボタンを横並びに配置
+        col_nav1, col_nav2 = st.columns([3, 1])
+        with col_nav1:
+            q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
+            selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
+            if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
+                st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
+                st.rerun()
+                
+        with col_nav2:
+            # ⏹️ 学習終了ボタン（押した瞬間にそこまでの時間を保存して終了）
+            if st.button("⏹️ 学習終了", type="primary"):
+                elapsed = time.time() - st.session_state.last_action_time
+                update_study_time(current_user, elapsed)
+                st.session_state.test_pool = []
+                if "last_action_time" in st.session_state:
+                    del st.session_state["last_action_time"]
+                st.success("✅ 学習時間を記録して終了しました！お疲れ様です。")
+                time.sleep(2)
+                st.rerun()
 
-        # 📖 【超重要】ここで curr（現在の問題）を定義して、画面に表示する！
+        # 📖 現在の問題を表示
         curr = st.session_state.test_pool[0]
         st.subheader(f"【{curr['field']}】 {curr['q_num']}")
         
@@ -557,6 +597,12 @@ if mode_select in ["学習モード", "復習モード"]:
         cols = st.columns(6)
         for i in range(6):
             if cols[i].button(f"{i}点", key=f"b{i}"):
+                
+                # 🌟 解答した瞬間に経過時間を自動保存！
+                elapsed = time.time() - st.session_state.last_action_time
+                update_study_time(current_user, elapsed)
+                st.session_state.last_action_time = time.time() # タイマーリセット
+                
                 # 履歴保存とデータ更新
                 st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
                 idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
@@ -564,7 +610,7 @@ if mode_select in ["学習モード", "復習モード"]:
                 today_str = datetime.today().strftime('%Y-%m-%d')
                 st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
                 
-                # 🌟 追加：ノルマ達成チェックとLINE通知（ここから下は元のコードが続きます）
+                # 🌟 ノルマ達成チェックとLINE通知（元のコードそのまま！）
                 done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
                 if done_today == 20:
                     try:
@@ -586,7 +632,8 @@ if mode_select in ["学習モード", "復習モード"]:
                 conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
                 st.session_state.test_pool.pop(0)
                 st.rerun()
-        
+
+
         # 戻る・スキップ
         c1, c2 = st.columns(2)
         if c1.button("↩️ 1つ戻る", disabled=not st.session_state.history, use_container_width=True):
