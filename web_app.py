@@ -110,7 +110,7 @@ def load_full_data():
     """スプレッドシートから全データを読み込み、型を整える"""
     try:
         # Sheet1（メインの学習記録）を読み込み
-        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4], ttl=0)
+        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4], ttl=15)
         df = df.dropna(how="all")
         
         # 型の強制固定（エラー防止）
@@ -230,7 +230,7 @@ def check_and_trigger_report():
 
     # --- A. 朝の進捗レポート送信 ---
     try:
-        sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=0)
+        sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=15)
         last_sent = str(sys_df.iloc[0, 0])
         if last_sent != today_str:
             # 更新処理
@@ -271,8 +271,8 @@ def check_and_trigger_report():
 def check_unread_monologue(current_user):
     """独り言掲示板の未読があるかチェック"""
     try:
-        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
-        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=0)
+        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=15)
         
         user_status = status_df[status_df['user'] == current_user]
         if user_status.empty or mono_df.empty:
