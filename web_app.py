@@ -7,10 +7,9 @@ import os
 import requests
 import json
 
-# --- 1. LINE通知用関数 ---
-# 🌟 LINE通知用関数（エラー詳細表示版）
+# 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
-    import streamlit as st # 画面にエラーを出すために追加
+    import streamlit as st
     try:
         url = "https://api.line.me/v2/bot/message/broadcast"
         headers = {
@@ -25,12 +24,14 @@ def send_line_notification(message):
         if response.status_code == 200:
             return True
         else:
-            # 🌟 エラーが起きたら画面に赤文字でLINEからの返答をそのまま出す！
-            st.error(f"🚨 LINE送信失敗！ コード: {response.status_code}\n理由: {response.text}")
+            # 🌟 LINEから拒否されたら、画面を止めてエラー文を表示する！
+            st.error(f"🚨 LINE送信失敗！\nコード: {response.status_code}\n理由: {response.text}")
+            st.stop()  # ここでプログラムを強制停止させる
             return False
             
     except Exception as e:
         st.error(f"🚨 根本的な通信エラー: {e}")
+        st.stop()
         return False
 
 # --- 2. ユーザー別個別設定 ---
