@@ -292,6 +292,15 @@ def check_unread_monologue(current_user):
 
 # --- 4. UI構築・メインロジック ---
 st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
+# --- 不要なStreamlitのメニューバーを隠す魔法 ---
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
 
 # ⚠️ current_user をここで一番最初に定義する！
 current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()), key="user_selector")
