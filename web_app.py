@@ -587,55 +587,50 @@ elif mode_select == "分析ダッシュボード":
 
     # --- ⏱️ 2. 分野別の学習時間 ---
     st.subheader("⏱️ 分野別の学習時間 (累計)")
-    if 'time_df' in locals() and not time_df.empty:
-        user_time = time_df[time_df['user'] == current_user].copy()
+    
+    try:
+        # 上の処理に依存しないよう、ここで安全に読み込み直します
+        time_df_personal = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=15)
         
-        # 新しく追加した field 列があるかチェック
-        if 'field' in user_time.columns and not user_time.empty:
-            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
-            # 0分のデータは除外
-            field_time = field_time[field_time['study_minutes'] > 0]
+        if not time_df_personal.empty:
+            user_time = time_df_personal[time_df_personal['user'] == current_user].copy()
             
-            if not field_time.empty:
-                # ドーナツ型の円グラフで比率を可視化
-                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
-                    theta=alt.Theta(field="study_minutes", type="quantitative"),
-                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
-                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
-                ).properties(height=300)
-                st.altair_chart(chart_time, use_container_width=True)
+            if not user_time.empty:
+                # 文字列を数値に変換し、「分」を計算
+                user_time['study_seconds'] = pd.to_numeric(user_time['study_seconds'], errors='coerce').fillna(0)
+                user_time['study_minutes'] = user_time['study_seconds'] / 60.0
+                
+                # 🌟 重要：スプレッドシートの field 列が空欄だった場合の対策
+                if 'field' not in user_time.columns:
+                    user_time['field'] = '未分類'
+                else:
+                    # 空欄(NaN)や文字が入っていない行を「未分類」に書き換える
+                    user_time['field'] = user_time['field'].fillna('未分類')
+                    user_time.loc[user_time['field'] == '', 'field'] = '未分類'
+                
+                # 分野ごとに時間を合計
+                field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
+                
+                # 0分のデータは除外
+                field_time = field_time[field_time['study_minutes'] > 0]
+                
+                if not field_time.empty:
+                    # ドーナツ型の円グラフで比率を可視化
+                    chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
+                        theta=alt.Theta(field="study_minutes", type="quantitative"),
+                        color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
+                        tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+                    ).properties(height=300)
+                    st.altair_chart(chart_time, use_container_width=True)
+                else:
+                    st.info("記録された学習時間が0分のため、グラフはまだ表示されません。問題を解いて時間を貯めてください！")
             else:
-                st.info("分野別の時間データがまだ蓄積されていません。")
+                st.info("あなたの学習時間データがまだありません。")
         else:
-            st.info("分野別の時間データがまだ蓄積されていません。（今後記録されます）")
-    else:
-        st.info("時間データがありません。")
-
-    # --- ⏱️ 2. 分野別の学習時間 ---
-    st.subheader("⏱️ 分野別の学習時間 (累計)")
-    if 'time_df' in locals() and not time_df.empty:
-        user_time = time_df[time_df['user'] == current_user].copy()
-        
-        # 新しく追加した field 列があるかチェック
-        if 'field' in user_time.columns and not user_time.empty:
-            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
-            # 0分のデータは除外
-            field_time = field_time[field_time['study_minutes'] > 0]
+            st.info("学習時間の記録がまだありません。")
             
-            if not field_time.empty:
-                # ドーナツ型の円グラフで比率を可視化
-                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
-                    theta=alt.Theta(field="study_minutes", type="quantitative"),
-                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
-                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
-                ).properties(height=300)
-                st.altair_chart(chart_time, use_container_width=True)
-            else:
-                st.info("分野別の時間データがまだ蓄積されていません。")
-        else:
-            st.info("分野別の時間データがまだ蓄積されていません。（今後記録されます）")
-    else:
-        st.info("時間データがありません。")
+    except Exception as e:
+        st.error(f"時間データの読み込み中にエラーが発生しました: {e}")
 
 
     # 🚩 各ユーザーの苦手単元ワースト
