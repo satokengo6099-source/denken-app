@@ -328,9 +328,6 @@ mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", 
 
 # (以下、今のコードが続く...)
 
-st.sidebar.divider()
-mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
-
 # 📅 試験日カウントダウンと進捗計算
 # 🌟 本試験の日付（2026年8月30日に設定しています）
 EXAM_DATE = datetime(2026, 8, 30).date() 
