@@ -453,6 +453,58 @@ elif mode_select == "分析ダッシュボード":
     
     st.table(pd.DataFrame(comparison))
 
+    # ⏱️ 追加：メンバー学習時間比較グラフ
+    st.divider()
+    st.subheader("⏱️ メンバー学習時間比較")
+    
+    try:
+        # 学習時間データの読み込み
+        time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=15)
+        
+        if not time_df.empty:
+            # 文字列を数値に変換し、秒から「分」に変換する
+            time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
+            time_df['study_minutes'] = time_df['study_seconds'] / 60.0
+            
+            # 期間の文字列を作成
+            today_str = datetime.today().strftime('%Y-%m-%d')
+            this_month_prefix = datetime.today().strftime('%Y-%m')
+            
+            # 各期間ごとのデータを集計（ユーザーごとに合計）
+            today_df = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum()
+            month_df = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum()
+            total_df = time_df.groupby('user')['study_minutes'].sum()
+            
+            # 横に3つ並べてグラフを表示
+            col_g1, col_g2, col_g3 = st.columns(3)
+            
+            with col_g1:
+                st.markdown("##### 📅 今日の学習 (分)")
+                if not today_df.empty and today_df.sum() > 0:
+                    st.bar_chart(today_df)
+                else:
+                    st.info("今日の記録はまだありません")
+                    
+            with col_g2:
+                st.markdown("##### 🗓️ 今月の学習 (分)")
+                if not month_df.empty and month_df.sum() > 0:
+                    st.bar_chart(month_df)
+                else:
+                    st.info("今月の記録はまだありません")
+                    
+            with col_g3:
+                st.markdown("##### 🏆 累計学習 (分)")
+                if not total_df.empty and total_df.sum() > 0:
+                    st.bar_chart(total_df)
+                else:
+                    st.info("累計記録はまだありません")
+                    
+        else:
+            st.info("学習時間の記録がまだありません。問題を解くとここにグラフが表示されます。")
+            
+    except Exception as e:
+        st.error(f"学習時間データの読み込みエラー: {e}")
+
     # 🚩 各ユーザーの苦手単元ワースト
     st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
     
