@@ -7,6 +7,7 @@ import os
 import requests
 import json
 import time
+import altair as alt  # 👈 ファイルの先頭付近に追加！
 
 # 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
@@ -453,7 +454,9 @@ elif mode_select == "分析ダッシュボード":
     
     st.table(pd.DataFrame(comparison))
 
-    # ⏱️ 追加：メンバー学習時間比較グラフ
+
+
+# ⏱️ 追加：メンバー学習時間比較グラフ（ユーザー別カラー版）
     st.divider()
     st.subheader("⏱️ メンバー学習時間比較")
     
@@ -470,32 +473,48 @@ elif mode_select == "分析ダッシュボード":
             today_str = datetime.today().strftime('%Y-%m-%d')
             this_month_prefix = datetime.today().strftime('%Y-%m')
             
-            # 各期間ごとのデータを集計（ユーザーごとに合計）
-            today_df = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum()
-            month_df = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum()
-            total_df = time_df.groupby('user')['study_minutes'].sum()
+            # --- 🌟 データ集計（Altair用に reset_index() を追加） ---
+            # ユーザーごとに合計したデータを、列を持つデータフレームにする
+            today_data = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum().reset_index()
+            month_data = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum().reset_index()
+            total_data = time_df.groupby('user')['study_minutes'].sum().reset_index()
             
             # 横に3つ並べてグラフを表示
             col_g1, col_g2, col_g3 = st.columns(3)
             
+            # --- 🪄 Altair Chart 作成用の共通関数（ここが色の魔法！） ---
+            def create_altair_chart(data, title):
+                chart = alt.Chart(data).mark_bar().encode(
+                    x=alt.X('user', title='ユーザー'), # X軸
+                    y=alt.Y('study_minutes', title='学習時間 (分)'), # Y軸
+                    # 🌟 色をユーザーに基づいて自動的にマッピングする設定
+                    color=alt.Color('user', title='ユーザー', scale=alt.Scale(scheme='tableau10')), 
+                    tooltip=[ # ホバーした時のツールチップ
+                        alt.Tooltip('user', title='ユーザー'),
+                        alt.Tooltip('study_minutes', title='時間 (分)', format='.1f')
+                    ]
+                ).properties(title=title)
+                return chart
+
+            # --- 各グラフの表示（st.bar_chart から st.altair_chart に変更） ---
             with col_g1:
                 st.markdown("##### 📅 今日の学習 (分)")
-                if not today_df.empty and today_df.sum() > 0:
-                    st.bar_chart(today_df)
+                if not today_data.empty and today_data['study_minutes'].sum() > 0:
+                    st.altair_chart(create_altair_chart(today_data, '今日の学習'), use_container_width=True)
                 else:
                     st.info("今日の記録はまだありません")
                     
             with col_g2:
                 st.markdown("##### 🗓️ 今月の学習 (分)")
-                if not month_df.empty and month_df.sum() > 0:
-                    st.bar_chart(month_df)
+                if not month_data.empty and month_data['study_minutes'].sum() > 0:
+                    st.altair_chart(create_altair_chart(month_data, '今月の学習'), use_container_width=True)
                 else:
                     st.info("今月の記録はまだありません")
                     
             with col_g3:
                 st.markdown("##### 🏆 累計学習 (分)")
-                if not total_df.empty and total_df.sum() > 0:
-                    st.bar_chart(total_df)
+                if not total_data.empty and total_data['study_minutes'].sum() > 0:
+                    st.altair_chart(create_altair_chart(total_data, '累計学習'), use_container_width=True)
                 else:
                     st.info("累計記録はまだありません")
                     
