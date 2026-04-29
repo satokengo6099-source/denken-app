@@ -537,17 +537,21 @@ elif mode_select == mono_label:
 
 # --- 7. 共通の問題表示・解答エリア ---
 is_unlocked = st.session_state.get(f"unlocked_{current_user}", False)
-
-# --- 7. 共通の問題表示・解答エリア ---
-# ロック機能を撤廃し、すぐに問題を表示できるように修正
 if mode_select in ["学習モード", "復習モード"]:
-    if st.session_state.test_pool:
+    if st.session_state.get("test_pool"):
         st.divider()
+        
         # 🚀 ナビゲーション
         q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
         selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
         
-        # ... (これより下の解答ボタン処理などはそのまま) ...
+        if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
+            st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
+            st.rerun()
+
+        # 📖 【超重要】ここで curr（現在の問題）を定義して、画面に表示する！
+        curr = st.session_state.test_pool[0]
+        st.subheader(f"【{curr['field']}】 {curr['q_num']}")
         
         # 解答ボタン
         cols = st.columns(6)
@@ -560,7 +564,7 @@ if mode_select in ["学習モード", "復習モード"]:
                 today_str = datetime.today().strftime('%Y-%m-%d')
                 st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
                 
-                # 🌟 追加：ノルマ達成チェックとLINE通知
+                # 🌟 追加：ノルマ達成チェックとLINE通知（ここから下は元のコードが続きます）
                 done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
                 if done_today == 20:
                     try:
