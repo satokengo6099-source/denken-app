@@ -246,7 +246,7 @@ def check_and_trigger_report():
     if now_hour >= 22:
         try:
             # TaskLogsシートから今日の警告が送信済みか確認
-            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=0)
+            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=15)
             warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '22h_warning')]
             
             if warning_sent.empty:
@@ -505,7 +505,7 @@ elif mode_select == mono_label:
                 new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], 
                                        columns=["date", "user", "content", "file_name"])
                 try:
-                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
+                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
                     updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
                     conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
                     
@@ -521,7 +521,7 @@ elif mode_select == mono_label:
     # タイムライン表示
     st.divider()
     try:
-        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=0)
+        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
         if not display_mono.empty:
             display_mono.columns = display_mono.columns.str.strip()
             display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
@@ -583,7 +583,7 @@ if mode_select in ["学習モード", "復習モード"]:
                 done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
                 if done_today == 20:
                     try:
-                        logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=0)
+                        logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=15)
                         already_sent = logs[(logs['date'] == today_str) & 
                                             (logs['user'] == current_user) & 
                                             (logs['type'] == 'completed')]
