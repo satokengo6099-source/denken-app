@@ -848,17 +848,32 @@ elif mode_select == "分析ダッシュボード":
             st.markdown(f"**👤 {user}の弱点**")
             u_df = full_df_ana[full_df_ana['user'] == user].copy()
             if not u_df.empty:
+                # 単元名の抽出と型の固定
                 u_df['単元'] = u_df['q_num'].str.split('No').str[0]
                 u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
                 u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-                u_res = u_df.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level_num', lambda x: (x >= 3).sum()), done_q=('is_done', 'sum')).reset_index()
-                u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
-                worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
-                if not worst.empty:
-                    for r in worst.itertuples():
-                        st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
+                
+                # 🌟 1. 「着手済み」の問題だけに絞り込む（未着手による正答率低下を防ぐ）
+                attempted_df = u_df[u_df['is_done']].copy()
+                
+                if not attempted_df.empty:
+                    # 🌟 2. 個人ダッシュボードと同じ「5点満点中の理解度(%)」を計算
+                    attempted_df['理解度'] = (attempted_df['level_num'] / 5.0) * 100
+                    
+                    # 単元ごとに平均理解度を算出
+                    u_res = attempted_df.groupby(['field', '単元'])['理解度'].mean().reset_index()
+                    u_res['理解度'] = u_res['理解度'].round(1)
+                    
+                    # 🌟 3. 理解度が低い順に並べ替え（本当に苦手なものだけ抽出）
+                    worst = u_res.sort_values('理解度').head(7)
+                    
+                    if not worst.empty:
+                        for r in worst.itertuples():
+                            st.error(f"{r.field}：{r.単元}\n({r.理解度}%)")
+                    else:
+                        st.success("弱点なし")
                 else:
-                    st.success("弱点なし")
+                    st.success("弱点データなし\n（または未着手）")
 
 
 
