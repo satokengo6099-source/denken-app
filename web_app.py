@@ -786,8 +786,50 @@ elif mode_select == "分析ダッシュボード":
             
     except Exception as e:
         st.error(f"目標期日の読み込みエラー: {e}")
+
+# ==========================================
+    # 📅 目標期日 ＆ 休日設定エリア
+    # ==========================================
+    st.divider()
+    st.info(f"💡 {current_user}さんの目標設定")
     
-st.divider()
+    try:
+        # 目標期日データの読み込み
+        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=10)
+        
+        # 現在の自分の設定があるか確認
+        my_goal_row = goal_df[goal_df['user'] == current_user]
+        
+        # 初期値の設定（なければ今日から115日後などをデフォルトにする）
+        default_date = datetime.today() + timedelta(days=115)
+        if not my_goal_row.empty:
+            current_goal_str = my_goal_row.iloc[0]['goal_date']
+            default_date = datetime.strptime(current_goal_str, '%Y-%m-%d')
+        
+        # 日付入力フォーム
+        new_goal = st.date_input("個人の目標期日を変更する", default_date)
+        
+        if st.button("目標期日を更新する"):
+            new_goal_str = new_goal.strftime('%Y-%m-%d')
+            if not my_goal_row.empty:
+                # 既存の行を更新
+                idx = goal_df[goal_df['user'] == current_user].index[0]
+                goal_df.loc[idx, 'goal_date'] = new_goal_str
+            else:
+                # 新しく追加
+                new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
+                goal_df = pd.concat([goal_df, new_row], ignore_index=True)
+            
+            conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
+            st.success(f"目標期日を {new_goal_str} に更新しました！")
+            time.sleep(1)
+            st.rerun()
+            
+    except Exception as e:
+        st.error(f"目標期日の読み込みエラー: {e}")
+
+    # --- 📅 休日（勉強しない日）設定エリア ---
+    st.divider()
     st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
 
     try:
@@ -804,7 +846,6 @@ st.divider()
         
         with col_h1:
             st.markdown("##### ➕ 休日の追加")
-            # 🌟 エラー回避：初期値を空にして、単一の日付か「期間」を選べるように変更！
             selected_dates = st.date_input(
                 "休みにする日（または期間）を選択",
                 value=[], 
@@ -814,7 +855,7 @@ st.divider()
             if st.button("休日を追加する"):
                 new_dates = []
                 if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-                    # 期間（連休）が選ばれた場合、その間の日をすべて計算してリスト化
+                    # 期間（連休）が選ばれた場合
                     start_d, end_d = selected_dates
                     days_between = (end_d - start_d).days
                     new_dates = [(start_d + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(days_between + 1)]
@@ -845,7 +886,6 @@ st.divider()
         with col_h2:
             st.markdown("##### 🗑️ 登録済みの休日")
             if my_holidays:
-                # 🌟 リスト形式で表示し、選んで削除できるようにする
                 to_remove = st.multiselect("予定が変わって勉強する日（選択して削除）", my_holidays)
                 if st.button("選択した休日をリストから消す"):
                     if to_remove:
