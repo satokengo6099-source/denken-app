@@ -308,7 +308,7 @@ def check_and_trigger_report():
 
     # --- A. 朝の進捗レポート送信 ---
     try:
-        sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=15)
+        sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=600)
         if sys_df.empty or len(sys_df.columns) == 0:
             st.error("Systemシートが空です！1行目のA列に『last_report_date』と入力してください。")
             return
@@ -328,14 +328,14 @@ def check_and_trigger_report():
     # 🌟 ここを 22 から 20 に変更しました
     if now_hour >= 20:
         try:
-            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=15)
+            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=1200)
             # 🌟 ログのタイプ名も 20h_warning に更新
             warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '20h_warning')]
             
             if warning_sent.empty:
                 full_df = load_full_data()
                 try:
-                    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+                    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
                 except:
                     h_df = pd.DataFrame(columns=['user', 'holiday_date'])
 
@@ -365,8 +365,8 @@ def check_and_trigger_report():
 def check_unread_monologue(current_user):
     """独り言掲示板の未読があるかチェック"""
     try:
-        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
-        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=15)
+        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=1300)
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=1000)
         
         user_status = status_df[status_df['user'] == current_user]
         if user_status.empty or mono_df.empty:
@@ -434,7 +434,7 @@ except:
 
 # --- 📅 2. 休日を除いた「実質残り日数」の計算 と 休日LINE通知 ---
 try:
-    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=1200)
     my_h_list = h_df[h_df['user'] == current_user]['holiday_date'].tolist()
     
     # 今日から目標期日までの全日程
@@ -794,7 +794,7 @@ elif mode_select == "分析ダッシュボード":
 
     try:
         # 休日データの読み込み
-        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=15)
+        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
         
         # 現在の自分の休日リストを取得
         my_holidays = holiday_df[holiday_df['user'] == current_user]['holiday_date'].tolist()
