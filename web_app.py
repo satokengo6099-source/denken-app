@@ -220,7 +220,6 @@ JST = timezone(timedelta(hours=+9), 'JST')
 
 def generate_report_message(full_df):
     """LINE送信用に精神攻撃レポートの本文を生成する"""
-    # 🌟 すべて日本時間（JST）ベースで「昨日」を計算する
     now_jst = datetime.now(JST)
     yesterday_dt = (now_jst - timedelta(days=1)).date()
     yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
@@ -229,6 +228,12 @@ def generate_report_message(full_df):
         h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
     except:
         h_df = pd.DataFrame(columns=['user', 'holiday_date'])
+
+    try:
+        time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=60)
+        time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
+    except:
+        time_df = pd.DataFrame(columns=['user', 'date', 'study_seconds'])
     
     msg = f"📢 【電験：朝の進捗報告】\n{yesterday_dt.strftime('%m/%d')} の結果です。\n"
     msg += "="*15 + "\n"
@@ -248,11 +253,22 @@ def generate_report_message(full_df):
 
         u_data = full_df[full_df['user'] == user]
         
+        if not time_df.empty and 'date' in time_df.columns and 'user' in time_df.columns:
+            y_time_data = time_df[(time_df['user'] == user) & (time_df['date'] == yesterday_str)]
+            total_sec = y_time_data['study_seconds'].sum()
+            total_min = int(total_sec // 60)
+            if total_min >= 60:
+                time_str = f"{total_min // 60}時間{total_min % 60}分"
+            else:
+                time_str = f"{total_min}分"
+        else:
+            time_str = "0分"
+
         valid_dates = u_data[u_data['last_date'].astype(str).str.contains("-", na=False)]['last_date']
         if not valid_dates.empty:
             last_action_str = valid_dates.max()
             last_action_date = datetime.strptime(last_action_str, '%Y-%m-%d').date()
-            slack_days = (now_jst.date() - last_action_date).days - 1 # 🌟 昨日時点でのサボり日数
+            slack_days = (now_jst.date() - last_action_date).days - 1 
         else:
             slack_days = 999 
 
@@ -264,16 +280,16 @@ def generate_report_message(full_df):
         
         display_name = f"【💀】{user}(敗北者)" if done == 0 and slack_days >= 3 else user
 
-        msg += f"👤 {display_name}\n📊 消化: {done}問 (平:{avg:.1f}点)\n"
+        msg += f"👤 {display_name}\n📊 消化: {done}問 (平:{avg:.1f}点) / ⏱️ {time_str}\n"
         
         if done >= 20:
-            msg += "💬: 合格確実です。このペースで勉強してください。\n"
+            msg += "💬: 合格確実。この調子で行きましょう。\n"
         elif done >= 1:
             msg += "💬: 記念受験。その程度で勉強したつもりですか？\n"
         else:
             if slack_days >= 3:
                 days_text = f"{slack_days}日連続" if slack_days != 999 else "永遠に"
-                msg += f"💬: 敗北者。{days_text}0問。。\n"
+                msg += f"💬: かれは敗北者になってしまいました。{days_text}0問({time_str})。。\n"
             else:
                 msg += "💬: 正気ですか？人生ごと不合格です。\n"
         msg += "-"*10 + "\n"
@@ -282,11 +298,10 @@ def generate_report_message(full_df):
     return msg
 
 def check_and_trigger_report():
-    """1日の各タイミング（朝の報告・22時警告）で通知を飛ばす"""
+    """1日の各タイミング（朝の報告・20時警告）で通知を飛ばす"""
     if st.session_state.get("report_checked", False):
         return
 
-    # 🌟 現在時刻も日本時間（JST）で取得！
     now_jst = datetime.now(JST)
     today_str = now_jst.strftime('%Y-%m-%d')
     now_hour = now_jst.hour
@@ -294,7 +309,6 @@ def check_and_trigger_report():
     # --- A. 朝の進捗レポート送信 ---
     try:
         sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=15)
-        # もしSystemシートが空ならエラーにするためのチェック
         if sys_df.empty or len(sys_df.columns) == 0:
             st.error("Systemシートが空です！1行目のA列に『last_report_date』と入力してください。")
             return
@@ -302,20 +316,20 @@ def check_and_trigger_report():
         last_sent = str(sys_df.iloc[0, 0]) if not sys_df.empty else ""
         
         if last_sent != today_str:
-            # 更新処理
             conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
             full_df = load_full_data()
             report_msg = generate_report_message(full_df)
             if send_line_notification(report_msg):
                 st.toast("LINEへ進捗レポートを送信しました📩")
     except Exception as e:
-        # エラーを隠さずに表示する（原因究明のため）
         st.error(f"朝のレポート送信エラー: {e}")
 
-    # --- B. 22時の未完了警告送信 ---
+    # --- B. 20時の未完了警告送信 ---
+    # 🌟 ここを 22 から 20 に変更しました
     if now_hour >= 20:
         try:
             logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=15)
+            # 🌟 ログのタイプ名も 20h_warning に更新
             warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '20h_warning')]
             
             if warning_sent.empty:
@@ -337,9 +351,10 @@ def check_and_trigger_report():
                         unfinished.append(f"・{user} (現在{done_today}問)")
                 
                 if unfinished:
-                    warn_msg = "🚨 【緊急警告：22時】\n以下の怠慢者がノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\nまだ間に合います。日付が変わる前に取り返しましょう。"
+                    # 🌟 メッセージ内の文言も 20時 に変更
+                    warn_msg = "🚨 【緊急警告：20時】\n以下の怠慢者がノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\n日付が変わる前に挽回しましょう。"
                     if send_line_notification(warn_msg):
-                        new_log = pd.DataFrame([[today_str, "system", "22h_warning"]], columns=["date", "user", "type"])
+                        new_log = pd.DataFrame([[today_str, "system", "20h_warning"]], columns=["date", "user", "type"])
                         updated_logs = pd.concat([logs, new_log], ignore_index=True)
                         conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
         except Exception as e:
@@ -367,31 +382,6 @@ def check_unread_monologue(current_user):
         return len(new_posts) > 0
     except:
         return False
-
-# --- 4. UI構築・メインロジック ---
-st.set_page_config(page_title="電験 学習マネージャー", layout="centered", page_icon="⚡")
-
-
-# ⚠️ current_user をここで一番最初に定義する！
-current_user = st.sidebar.selectbox("利用者を選択", list(USER_CONFIG.keys()), key="user_selector")
-target_date = USER_CONFIG[current_user]["deadline"]
-
-# データの読み込み
-if 'last_user' not in st.session_state or st.session_state.last_user != current_user:
-    with st.spinner(f"{current_user}さんのデータを読み込み中..."):
-        full_data = load_full_data()
-        st.session_state.db = sync_user_data(full_data, current_user)
-        st.session_state.last_user = current_user
-        st.session_state.test_pool = []
-        st.session_state.history = []
-
-if "db" in st.session_state:
-    db = st.session_state.db
-else:
-    st.stop()
-
-# レポートと警告のチェック
-check_and_trigger_report()
 
 # ==========================================
 # 👇 ここから「5. メニュー切り替え」に続く
