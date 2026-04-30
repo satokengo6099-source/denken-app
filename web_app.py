@@ -750,43 +750,6 @@ elif mode_select == "分析ダッシュボード":
     except Exception as e:
         st.error(f"時間データの読み込み中にエラーが発生しました: {e}")
 
-# --- 📅 個人の目標期日設定エリア ---
-    st.info(f"💡 {current_user}さんの目標設定")
-    
-    try:
-        # 目標期日データの読み込み
-        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=10)
-        
-        # 現在の自分の設定があるか確認
-        my_goal_row = goal_df[goal_df['user'] == current_user]
-        
-        # 初期値の設定（なければ今日から115日後などをデフォルトにする）
-        default_date = datetime.today() + timedelta(days=115)
-        if not my_goal_row.empty:
-            current_goal_str = my_goal_row.iloc[0]['goal_date']
-            default_date = datetime.strptime(current_goal_str, '%Y-%m-%d')
-        
-        # 日付入力フォーム
-        new_goal = st.date_input("個人の目標期日を変更する", default_date)
-        
-        if st.button("目標期日を更新する"):
-            new_goal_str = new_goal.strftime('%Y-%m-%d')
-            if not my_goal_row.empty:
-                # 既存の行を更新
-                idx = goal_df[goal_df['user'] == current_user].index[0]
-                goal_df.loc[idx, 'goal_date'] = new_goal_str
-            else:
-                # 新しく追加
-                new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
-                goal_df = pd.concat([goal_df, new_row], ignore_index=True)
-            
-            conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
-            st.success(f"目標期日を {new_goal_str} に更新しました！")
-            st.rerun()
-            
-    except Exception as e:
-        st.error(f"目標期日の読み込みエラー: {e}")
-
 # ==========================================
     # 📅 目標期日 ＆ 休日設定エリア
     # ==========================================
