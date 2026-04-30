@@ -207,8 +207,14 @@ def sync_user_data(full_df, user_name):
         new_full['level'] = new_full['level'].astype(int)
         new_full['last_date'] = new_full['last_date'].astype(str)
         
-        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
-        return updated_user_df
+        # 🌟 【鉄壁防御】通信エラーが起きてもアプリを落とさずスルーする！
+        try:
+            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
+            return updated_user_df
+        except Exception as e:
+            # エラー時は画面上に一瞬だけ警告を出し、アプリはそのまま動かし続ける
+            st.toast("⚠️ 通信制限のため新しい問題の同期をスキップしました。学習は継続できます。")
+            return user_df # 追加前の既存データをとりあえず返す
         
     return user_df
 
