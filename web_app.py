@@ -2,7 +2,7 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os  
 import requests
 import json
@@ -215,12 +215,16 @@ def sync_user_data(full_df, user_name):
 
 # --- 4. 通知・レポート管理機能 ---
 
+# 🌟 日本時間（JST）の設定を定義
+JST = timezone(timedelta(hours=+9), 'JST')
+
 def generate_report_message(full_df):
     """LINE送信用に精神攻撃レポートの本文を生成する"""
-    yesterday_dt = (datetime.today() - timedelta(days=1)).date()
+    # 🌟 すべて日本時間（JST）ベースで「昨日」を計算する
+    now_jst = datetime.now(JST)
+    yesterday_dt = (now_jst - timedelta(days=1)).date()
     yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
     
-    # 🌟 休日データの読み込み
     try:
         h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
     except:
@@ -230,54 +234,48 @@ def generate_report_message(full_df):
     msg += "="*15 + "\n"
 
     for user in USER_CONFIG.keys():
-        # 🌟 休日判定：昨日はお休みだったか？
         is_holiday = False
         if not h_df.empty and 'user' in h_df.columns:
             user_holidays = h_df[h_df['user'] == user]['holiday_date'].tolist()
             if yesterday_str in user_holidays:
                 is_holiday = True
         
-        # ☕ 休日の場合の特別処理（煽りをスキップ）
         if is_holiday:
             msg += f"👤 {user}\n"
             msg += f"💬: リフレッシュ休暇中 ☕\n"
             msg += "-"*10 + "\n"
-            continue  # これ以降のサボり計算や煽り文言をスキップして次の人へ！
+            continue 
 
-        # --- 以下、通常の処理（煽りあり） ---
         u_data = full_df[full_df['user'] == user]
         
-        # サボり日数の計算
         valid_dates = u_data[u_data['last_date'].astype(str).str.contains("-", na=False)]['last_date']
         if not valid_dates.empty:
             last_action_str = valid_dates.max()
             last_action_date = datetime.strptime(last_action_str, '%Y-%m-%d').date()
-            slack_days = (yesterday_dt - last_action_date).days
+            slack_days = (now_jst.date() - last_action_date).days - 1 # 🌟 昨日時点でのサボり日数
         else:
             slack_days = 999 
 
         if slack_days < 0: slack_days = 0
 
-        # 昨日のスコア
         y_data = u_data[u_data['last_date'] == yesterday_str]
         done = len(y_data)
         avg = pd.to_numeric(y_data['level'], errors='coerce').mean() if done > 0 else 0
         
-        # 名前剥奪
         display_name = f"【💀】{user}(敗北者)" if done == 0 and slack_days >= 3 else user
 
         msg += f"👤 {display_name}\n📊 消化: {done}問 (平:{avg:.1f}点)\n"
         
         if done >= 20:
-            msg += "💬: 合格確実。サボるゴミ達を置いて高みへ行きましょう。\n"
+            msg += "💬: 合格確実です。このペースで勉強してください。\n"
         elif done >= 1:
             msg += "💬: 記念受験。その程度で勉強したつもりですか？\n"
         else:
             if slack_days >= 3:
                 days_text = f"{slack_days}日連続" if slack_days != 999 else "永遠に"
-                msg += f"💬: 敗北者。{days_text}0問。恥を知りなさい。\n"
+                msg += f"💬: 敗北者。{days_text}0問。。\n"
             else:
-                msg += "💬: ゴミ。正気ですか？人生ごと不合格です。\n"
+                msg += "💬: 正気ですか？人生ごと不合格です。\n"
         msg += "-"*10 + "\n"
     
     msg += "※不満なら今すぐ机に向かえ。"
@@ -288,13 +286,21 @@ def check_and_trigger_report():
     if st.session_state.get("report_checked", False):
         return
 
-    today_str = datetime.today().strftime('%Y-%m-%d')
-    now_hour = datetime.today().hour
+    # 🌟 現在時刻も日本時間（JST）で取得！
+    now_jst = datetime.now(JST)
+    today_str = now_jst.strftime('%Y-%m-%d')
+    now_hour = now_jst.hour
 
     # --- A. 朝の進捗レポート送信 ---
     try:
         sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=15)
-        last_sent = str(sys_df.iloc[0, 0])
+        # もしSystemシートが空ならエラーにするためのチェック
+        if sys_df.empty or len(sys_df.columns) == 0:
+            st.error("Systemシートが空です！1行目のA列に『last_report_date』と入力してください。")
+            return
+            
+        last_sent = str(sys_df.iloc[0, 0]) if not sys_df.empty else ""
+        
         if last_sent != today_str:
             # 更新処理
             conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
@@ -302,19 +308,18 @@ def check_and_trigger_report():
             report_msg = generate_report_message(full_df)
             if send_line_notification(report_msg):
                 st.toast("LINEへ進捗レポートを送信しました📩")
-    except: pass
+    except Exception as e:
+        # エラーを隠さずに表示する（原因究明のため）
+        st.error(f"朝のレポート送信エラー: {e}")
 
     # --- B. 22時の未完了警告送信 ---
-    if now_hour >= 22:
+    if now_hour >= 20:
         try:
-            # TaskLogsシートから今日の警告が送信済みか確認
             logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=15)
-            warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '22h_warning')]
+            warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '20h_warning')]
             
             if warning_sent.empty:
                 full_df = load_full_data()
-                
-                # 🌟 休日データの読み込み
                 try:
                     h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
                 except:
@@ -322,25 +327,23 @@ def check_and_trigger_report():
 
                 unfinished = []
                 for user in USER_CONFIG.keys():
-                    # 🌟 休日判定：今日が休みの人は、未達成リストに入れない（免除）
                     if not h_df.empty and 'user' in h_df.columns:
                         user_holidays = h_df[h_df['user'] == user]['holiday_date'].tolist()
                         if today_str in user_holidays:
-                            continue  # 休みなのでスキップ
+                            continue 
                     
                     done_today = len(full_df[(full_df['user'] == user) & (full_df['last_date'] == today_str)])
                     if done_today < 20:
                         unfinished.append(f"・{user} (現在{done_today}問)")
                 
                 if unfinished:
-                    warn_msg = "🚨 【緊急警告：22時】\n以下の怠慢者がノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\n日付が変わる前に地獄の底から這い上がってきなさい。"
+                    warn_msg = "🚨 【緊急警告：22時】\n以下の怠慢者がノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\nまだ間に合います。日付が変わる前に取り返しましょう。"
                     if send_line_notification(warn_msg):
                         new_log = pd.DataFrame([[today_str, "system", "22h_warning"]], columns=["date", "user", "type"])
-                        # 既存ログと結合して更新
                         updated_logs = pd.concat([logs, new_log], ignore_index=True)
                         conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
         except Exception as e:
-            print(f"22時警告エラー: {e}")
+            st.error(f"20時警告エラー: {e}")
 
     st.session_state["report_checked"] = True
 
