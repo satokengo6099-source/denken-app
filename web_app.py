@@ -787,47 +787,88 @@ elif mode_select == "分析ダッシュボード":
     except Exception as e:
         st.error(f"目標期日の読み込みエラー: {e}")
     
-    st.divider()
-
-    st.divider()
+st.divider()
     st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
 
     try:
         # 休日データの読み込み
         holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+        if 'user' not in holiday_df.columns:
+            holiday_df = pd.DataFrame(columns=['user', 'holiday_date'])
         
-        # 現在の自分の休日リストを取得
-        my_holidays = holiday_df[holiday_df['user'] == current_user]['holiday_date'].tolist()
-        my_holidays_dt = [datetime.strptime(d, '%Y-%m-%d').date() for d in my_holidays]
+        # 現在の自分の休日リストを取得（重複を消して日付順に並べる）
+        my_holidays = holiday_df[holiday_df['user'] == current_user]['holiday_date'].dropna().tolist()
+        my_holidays = sorted(list(set(my_holidays)))
 
-        # 複数選択可能なカレンダーUI
-        selected_holidays = st.date_input(
-            "勉強しない日を選択してください（複数選択可）",
-            value=my_holidays_dt,
-            help="カレンダーでクリックして追加・削除できます"
-        )
+        col_h1, col_h2 = st.columns(2)
+        
+        with col_h1:
+            st.markdown("##### ➕ 休日の追加")
+            # 🌟 エラー回避：初期値を空にして、単一の日付か「期間」を選べるように変更！
+            selected_dates = st.date_input(
+                "休みにする日（または期間）を選択",
+                value=[], 
+                help="1日だけ選ぶか、開始日と終了日をクリックして期間を選べます"
+            )
+            
+            if st.button("休日を追加する"):
+                new_dates = []
+                if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+                    # 期間（連休）が選ばれた場合、その間の日をすべて計算してリスト化
+                    start_d, end_d = selected_dates
+                    days_between = (end_d - start_d).days
+                    new_dates = [(start_d + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(days_between + 1)]
+                elif isinstance(selected_dates, tuple) and len(selected_dates) == 1:
+                    new_dates = [selected_dates[0].strftime('%Y-%m-%d')]
+                elif selected_dates is not None and not isinstance(selected_dates, tuple):
+                    # 1日だけ選ばれた場合
+                    new_dates = [selected_dates.strftime('%Y-%m-%d')]
 
-        if st.button("休日設定を保存する"):
-            # 選択された日付を文字列リストに変換
-            new_holidays_str = [d.strftime('%Y-%m-%d') for d in selected_holidays]
-            
-            # 他のユーザーのデータは残し、自分のデータだけ入れ替える
-            other_users_holidays = holiday_df[holiday_df['user'] != current_user]
-            new_my_holidays = pd.DataFrame({
-                'user': [current_user] * len(new_holidays_str),
-                'holiday_date': new_holidays_str
-            })
-            
-            updated_holiday_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
-            
-            # スプレッドシート更新
-            conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_holiday_df)
-            st.success("休日設定を更新しました！これに基づき残り必要問題数が再計算されます。")
-            st.rerun()
+                if new_dates:
+                    # 既存の休日と合体させて重複を消す
+                    updated_holidays = sorted(list(set(my_holidays + new_dates)))
+                    
+                    other_users_holidays = holiday_df[holiday_df['user'] != current_user]
+                    new_my_holidays = pd.DataFrame({
+                        'user': [current_user] * len(updated_holidays),
+                        'holiday_date': updated_holidays
+                    })
+                    updated_holiday_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
+                    
+                    conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_holiday_df)
+                    st.success(f"{len(new_dates)}日分の休日を追加しました！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("日付を選択してください。")
+
+        with col_h2:
+            st.markdown("##### 🗑️ 登録済みの休日")
+            if my_holidays:
+                # 🌟 リスト形式で表示し、選んで削除できるようにする
+                to_remove = st.multiselect("予定が変わって勉強する日（選択して削除）", my_holidays)
+                if st.button("選択した休日をリストから消す"):
+                    if to_remove:
+                        updated_holidays = [d for d in my_holidays if d not in to_remove]
+                        
+                        other_users_holidays = holiday_df[holiday_df['user'] != current_user]
+                        new_my_holidays = pd.DataFrame({
+                            'user': [current_user] * len(updated_holidays),
+                            'holiday_date': updated_holidays
+                        })
+                        updated_holiday_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
+                        
+                        conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_holiday_df)
+                        st.success("休日を取り消しました！")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("削除する日付を選択してください。")
+            else:
+                st.write("現在、登録されている休日はありません。")
 
     except Exception as e:
         st.error(f"休日設定の読み込みエラー: {e}")
-
 
     # 🚩 各ユーザーの苦手単元ワースト
     st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
