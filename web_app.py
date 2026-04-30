@@ -390,22 +390,24 @@ def check_and_trigger_report():
 # --- B. 20時の未完了警告送信 ---
     if now_hour >= 20:
         try:
-            # 🌟 【鉄壁防御】読み込み失敗や、シートが空っぽの場合は空の枠組みを作る
             try:
                 logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=1200)
-                # 'date'列が存在しない（シートが空）場合の対策
                 if 'date' not in logs.columns:
                     logs = pd.DataFrame(columns=['date', 'user', 'type'])
             except:
                 logs = pd.DataFrame(columns=['date', 'user', 'type'])
             
-            # ログのタイプ名も 20h_warning に更新
             warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '20h_warning')]
             
             if warning_sent.empty:
                 full_df = load_full_data()
                 
-                # 🌟 休日データも同様に防御
+                # 🌟 【追加】各ユーザーの目標期日を読み込む
+                try:
+                    goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=600)
+                except:
+                    goal_df = pd.DataFrame(columns=['user', 'goal_date'])
+
                 try:
                     h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
                     if 'user' not in h_df.columns:
@@ -414,20 +416,49 @@ def check_and_trigger_report():
                     h_df = pd.DataFrame(columns=['user', 'holiday_date'])
 
                 unfinished = []
+                EXAM_DATE = datetime(2026, 8, 30).date()
+                today_dt = datetime.today().date()
+
                 for user in USER_CONFIG.keys():
-                    # 休日の人はスキップ
+                    # 1. 休日の人は問答無用でスキップ
+                    my_h_list = []
                     if not h_df.empty and 'user' in h_df.columns:
-                        user_holidays = h_df[h_df['user'] == user]['holiday_date'].tolist()
-                        if today_str in user_holidays:
+                        my_h_list = h_df[h_df['user'] == user]['holiday_date'].dropna().tolist()
+                        if today_str in my_h_list:
                             continue 
                     
-                    done_today = len(full_df[(full_df['user'] == user) & (full_df['last_date'] == today_str)])
-                    if done_today < 20:
-                        unfinished.append(f"・{user} (現在{done_today}問)")
+                    # 2. その人の目標期日を取得
+                    personal_target_date = EXAM_DATE
+                    if not goal_df.empty and 'user' in goal_df.columns:
+                        user_goal_row = goal_df[goal_df['user'] == user]
+                        if not user_goal_row.empty:
+                            personal_target_date = datetime.strptime(user_goal_row.iloc[0]['goal_date'], '%Y-%m-%d').date()
+
+                    # 3. 残りの「実質稼働日数」を計算
+                    total_days_range = [(today_dt + timedelta(days=i)) for i in range((personal_target_date - today_dt).days + 1)]
+                    active_study_days = [d for d in total_days_range if d.strftime('%Y-%m-%d') not in my_h_list]
+                    net_days_left = len(active_study_days)
+
+                    # 4. 残り問題数から「1日のノルマ」を計算
+                    u_df = full_df[full_df['user'] == user]
+                    total_count = len(u_df)
+                    unstarted_count = len(u_df[u_df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '') == ''])
+                    answered_count = total_count - unstarted_count
+                    remaining_questions = total_count - answered_count
+                    
+                    import math
+                    daily_pace = math.ceil(remaining_questions / net_days_left) if net_days_left > 0 else remaining_questions
+                    
+                    if daily_pace <= 0:
+                        continue # ノルマ0（全問完了済みなど）ならスキップ
+
+                    # 🌟 5. 今日の進捗と「本当のノルマ」を比較！
+                    done_today = len(u_df[u_df['last_date'] == today_str])
+                    if done_today < daily_pace:
+                        unfinished.append(f"・{user} (現在{done_today}問 / ノルマ{daily_pace}問)")
                 
                 if unfinished:
-                    # メッセージ内の文言も 20時 に変更
-                    warn_msg = "🚨 【緊急警告：20時】\n以下の怠慢者がノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\n日付が変わる前に挽回しましょう。"
+                    warn_msg = "🚨 【緊急警告：20時】\n以下の怠慢者が本日のノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\n日付が変わる前に挽回しましょう。"
                     if send_line_notification(warn_msg):
                         new_log = pd.DataFrame([[today_str, "system", "20h_warning"]], columns=["date", "user", "type"])
                         updated_logs = pd.concat([logs, new_log], ignore_index=True)
