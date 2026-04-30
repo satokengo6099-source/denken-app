@@ -536,15 +536,35 @@ elif mode_select == "復習モード":
 
 
 
+
+
+
+
+
 elif mode_select == "分析ダッシュボード":
     st.title(f"📊 分析ダッシュボード：{current_user}")
     
+    # 🌟 【通信節約】メインデータを1回読み込み（ttl=60秒 ※load_full_data内で設定済み）
     full_df_ana = load_full_data()
+    
+    try:
+        # 🌟 【改善】学習時間データを「ここで1回だけ」読み込み、10分間(600秒)使い回す！
+        # これにより、個人ダッシュボードで再読み込みするのを防ぎます
+        time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=600)
+        time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
+        time_df['study_minutes'] = time_df['study_seconds'] / 60.0
+        if 'field' not in time_df.columns:
+            time_df['field'] = '未分類'
+        time_df['field'] = time_df['field'].fillna('未分類')
+        time_df.loc[time_df['field'] == '', 'field'] = '未分類'
+    except:
+        time_df = pd.DataFrame(columns=['user', 'date', 'study_seconds', 'study_minutes', 'field'])
+
     yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
     user_yesterday = full_df_ana[(full_df_ana['user'] == current_user) & (full_df_ana['last_date'] == yesterday_str)]
     done_yesterday = len(user_yesterday)
 
-    # シンプルな進捗報告のみに変更
+    # シンプルな進捗報告
     if done_yesterday == 0:
         st.error(f"🚨 警告：昨日の進捗は 0 問です。言い訳せずに今日は遅れを取り戻しましょう。")
     else:
@@ -554,113 +574,83 @@ elif mode_select == "分析ダッシュボード":
 
     # 🏁 進捗比較
     st.subheader("🏁 メンバー進捗比較")
-    # (ここから下の「比較」や「ワースト7」の処理はそのまま残す)
     comparison = []
-    
     for user in USER_CONFIG.keys():
         u_df = full_df_ana[full_df_ana['user'] == user].copy()
         total = len(u_df)
-        
         if total > 0:
             valid_done = u_df[u_df['last_date'].astype(str).str.contains("-", na=False)]
             done = len(valid_done)
             rate = round((done / total) * 100, 1)
         else:
             rate = 0.0
-            
         comparison.append({"ユーザー": user, "進捗率": f"{rate}%"})
-    
     st.table(pd.DataFrame(comparison))
 
-
-
-# ⏱️ 追加：メンバー学習時間比較グラフ（ユーザー別カラー版）
+    # ⏱️ メンバー学習時間比較グラフ
     st.divider()
     st.subheader("⏱️ メンバー学習時間比較")
     
-    try:
-        # 学習時間データの読み込み
-        time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=15)
+    if not time_df.empty:
+        today_str = datetime.today().strftime('%Y-%m-%d')
+        this_month_prefix = datetime.today().strftime('%Y-%m')
         
-        if not time_df.empty:
-            # 文字列を数値に変換し、秒から「分」に変換する
-            time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
-            time_df['study_minutes'] = time_df['study_seconds'] / 60.0
-            
-            # 期間の文字列を作成
-            today_str = datetime.today().strftime('%Y-%m-%d')
-            this_month_prefix = datetime.today().strftime('%Y-%m')
-            
-            # --- 🌟 データ集計（Altair用に reset_index() を追加） ---
-            # ユーザーごとに合計したデータを、列を持つデータフレームにする
-            today_data = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum().reset_index()
-            month_data = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum().reset_index()
-            total_data = time_df.groupby('user')['study_minutes'].sum().reset_index()
-            
-            # 横に3つ並べてグラフを表示
-            col_g1, col_g2, col_g3 = st.columns(3)
-            
-            # --- 🪄 Altair Chart 作成用の共通関数（ここが色の魔法！） ---
-            def create_altair_chart(data, title):
-                chart = alt.Chart(data).mark_bar().encode(
-                    x=alt.X('user', title='ユーザー'), # X軸
-                    y=alt.Y('study_minutes', title='学習時間 (分)'), # Y軸
-                    # 🌟 色をユーザーに基づいて自動的にマッピングする設定
-                    color=alt.Color('user', title='ユーザー', scale=alt.Scale(scheme='tableau10')), 
-                    tooltip=[ # ホバーした時のツールチップ
-                        alt.Tooltip('user', title='ユーザー'),
-                        alt.Tooltip('study_minutes', title='時間 (分)', format='.1f')
-                    ]
-                ).properties(title=title)
-                return chart
+        today_data = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum().reset_index()
+        month_data = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum().reset_index()
+        total_data = time_df.groupby('user')['study_minutes'].sum().reset_index()
+        
+        col_g1, col_g2, col_g3 = st.columns(3)
+        
+        def create_altair_chart(data, title):
+            chart = alt.Chart(data).mark_bar().encode(
+                x=alt.X('user', title='ユーザー'),
+                y=alt.Y('study_minutes', title='学習時間 (分)'),
+                color=alt.Color('user', title='ユーザー', scale=alt.Scale(scheme='tableau10')), 
+                tooltip=[
+                    alt.Tooltip('user', title='ユーザー'),
+                    alt.Tooltip('study_minutes', title='時間 (分)', format='.1f')
+                ]
+            ).properties(title=title)
+            return chart
 
-            # --- 各グラフの表示（st.bar_chart から st.altair_chart に変更） ---
-            with col_g1:
-                st.markdown("##### 📅 今日の学習 (分)")
-                if not today_data.empty and today_data['study_minutes'].sum() > 0:
-                    st.altair_chart(create_altair_chart(today_data, '今日の学習'), use_container_width=True)
-                else:
-                    st.info("今日の記録はまだありません")
-                    
-            with col_g2:
-                st.markdown("##### 🗓️ 今月の学習 (分)")
-                if not month_data.empty and month_data['study_minutes'].sum() > 0:
-                    st.altair_chart(create_altair_chart(month_data, '今月の学習'), use_container_width=True)
-                else:
-                    st.info("今月の記録はまだありません")
-                    
-            with col_g3:
-                st.markdown("##### 🏆 累計学習 (分)")
-                if not total_data.empty and total_data['study_minutes'].sum() > 0:
-                    st.altair_chart(create_altair_chart(total_data, '累計学習'), use_container_width=True)
-                else:
-                    st.info("累計記録はまだありません")
-                    
-        else:
-            st.info("学習時間の記録がまだありません。問題を解くとここにグラフが表示されます。")
-            
-    except Exception as e:
-        st.error(f"学習時間データの読み込みエラー: {e}")
+        with col_g1:
+            st.markdown("##### 📅 今日の学習 (分)")
+            if not today_data.empty and today_data['study_minutes'].sum() > 0:
+                st.altair_chart(create_altair_chart(today_data, '今日の学習'), use_container_width=True)
+            else:
+                st.info("今日の記録はまだありません")
+                
+        with col_g2:
+            st.markdown("##### 🗓️ 今月の学習 (分)")
+            if not month_data.empty and month_data['study_minutes'].sum() > 0:
+                st.altair_chart(create_altair_chart(month_data, '今月の学習'), use_container_width=True)
+            else:
+                st.info("今月の記録はまだありません")
+                
+        with col_g3:
+            st.markdown("##### 🏆 累計学習 (分)")
+            if not total_data.empty and total_data['study_minutes'].sum() > 0:
+                st.altair_chart(create_altair_chart(total_data, '累計学習'), use_container_width=True)
+            else:
+                st.info("累計記録はまだありません")
+    else:
+        st.info("学習時間の記録がまだありません。")
 
-# ==========================================
+    # ==========================================
     # 👤 個人専用ダッシュボード
     # ==========================================
     st.divider()
     st.header(f"👤 {current_user} 専用ダッシュボード")
     st.caption("※このデータはあなたしか見ることができません。")
 
-    # --- 🎯 1. 分野・単元別の正解率（理解度） ---
+    # --- 🎯 1. 分野・単元別の正解率 ---
     st.subheader("🎯 分野・単元別の正解率（理解度）")
     user_db = full_df_ana[full_df_ana['user'] == current_user].copy()
-    
-    # 一度でも解いたことのある問題を抽出
     attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
 
     if not attempted.empty:
-        # 5点満点としてパーセンテージ(%)に変換
         attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
         attempted['accuracy'] = (attempted['level'] / 5.0) * 100
-        
         col_p1, col_p2 = st.columns(2)
         
         with col_p1:
@@ -676,236 +666,145 @@ elif mode_select == "分析ダッシュボード":
             
         with col_p2:
             st.markdown("##### 📖 分野ごとの単元別理解度")
-            # 🌟 魔法のコード：q_numから「No」の前半だけを自動抽出！
             attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
-            
-            # 解答履歴にある「分野（理論、機械など）」のリストをすべて取得
             unique_fields = attempted['field'].unique()
-            
-            # 🌟 分野ごとにループを回して、それぞれのグラフを作る
             for field_name in unique_fields:
                 st.markdown(f"###### 📘 {field_name}")
-                
-                # その分野だけのデータを抽出して集計
                 field_data = attempted[attempted['field'] == field_name]
                 unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
-                
-                # グラフの作成
                 chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
                     x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                    y=alt.Y('unit', title='単元', sort='-x'), # 理解度が高い順に並べる
+                    y=alt.Y('unit', title='単元', sort='-x'),
                     color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
                     tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-                ).properties(height=200) # グラフの高さを少しスッキリさせる
-                
+                ).properties(height=200)
                 st.altair_chart(chart_unit, use_container_width=True)
-                
     else:
-        st.info("まだ解答データがありません。問題を解くと分析が表示されます。")
+        st.info("解答データがありません。")
 
     # --- ⏱️ 2. 分野別の学習時間 ---
     st.subheader("⏱️ 分野別の学習時間 (累計)")
     
-    try:
-        # 上の処理に依存しないよう、ここで安全に読み込み直します
-        time_df_personal = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=15)
-        
-        if not time_df_personal.empty:
-            user_time = time_df_personal[time_df_personal['user'] == current_user].copy()
-            
-            if not user_time.empty:
-                # 文字列を数値に変換し、「分」を計算
-                user_time['study_seconds'] = pd.to_numeric(user_time['study_seconds'], errors='coerce').fillna(0)
-                user_time['study_minutes'] = user_time['study_seconds'] / 60.0
-                
-                # 🌟 重要：スプレッドシートの field 列が空欄だった場合の対策
-                if 'field' not in user_time.columns:
-                    user_time['field'] = '未分類'
-                else:
-                    # 空欄(NaN)や文字が入っていない行を「未分類」に書き換える
-                    user_time['field'] = user_time['field'].fillna('未分類')
-                    user_time.loc[user_time['field'] == '', 'field'] = '未分類'
-                
-                # 分野ごとに時間を合計
-                field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
-                
-                # 0分のデータは除外
-                field_time = field_time[field_time['study_minutes'] > 0]
-                
-                if not field_time.empty:
-                    # ドーナツ型の円グラフで比率を可視化
-                    chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
-                        theta=alt.Theta(field="study_minutes", type="quantitative"),
-                        color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
-                        tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
-                    ).properties(height=300)
-                    st.altair_chart(chart_time, use_container_width=True)
-                else:
-                    st.info("記録された学習時間が0分のため、グラフはまだ表示されません。問題を解いて時間を貯めてください！")
-            else:
-                st.info("あなたの学習時間データがまだありません。")
-        else:
-            st.info("学習時間の記録がまだありません。")
-            
-    except Exception as e:
-        st.error(f"時間データの読み込み中にエラーが発生しました: {e}")
+    # 🌟 【改善】読み込み直さず、一番上で取得した time_df を使い回す
+    if not time_df.empty:
+        user_time = time_df[time_df['user'] == current_user].copy()
+        if not user_time.empty:
+            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
+            field_time = field_time[field_time['study_minutes'] > 0]
+            if not field_time.empty:
+                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta(field="study_minutes", type="quantitative"),
+                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
+                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+                ).properties(height=300)
+                st.altair_chart(chart_time, use_container_width=True)
 
-# ==========================================
-    # 📅 目標期日 ＆ 休日設定エリア
-    # ==========================================
+    # --- 📅 目標期日 ＆ 休日設定エリア ---
     st.divider()
     st.info(f"💡 {current_user}さんの目標設定")
-    
     try:
-        # 目標期日データの読み込み
-        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=10)
-        
-        # 現在の自分の設定があるか確認
+        # 🌟 【改善】キャッシュを10分(600秒)に大幅アップ
+        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=600)
         my_goal_row = goal_df[goal_df['user'] == current_user]
-        
-        # 初期値の設定（なければ今日から115日後などをデフォルトにする）
         default_date = datetime.today() + timedelta(days=115)
         if not my_goal_row.empty:
             current_goal_str = my_goal_row.iloc[0]['goal_date']
             default_date = datetime.strptime(current_goal_str, '%Y-%m-%d')
-        
-        # 日付入力フォーム
-        new_goal = st.date_input("個人の目標期日を変更する", default_date)
-        
-        if st.button("目標期日を更新する"):
+        new_goal = st.date_input("個人の目標期日を変更する", default_date, key="goal_date_input")
+        if st.button("目標期日を更新する", key="goal_btn"):
             new_goal_str = new_goal.strftime('%Y-%m-%d')
             if not my_goal_row.empty:
-                # 既存の行を更新
                 idx = goal_df[goal_df['user'] == current_user].index[0]
                 goal_df.loc[idx, 'goal_date'] = new_goal_str
             else:
-                # 新しく追加
                 new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
                 goal_df = pd.concat([goal_df, new_row], ignore_index=True)
-            
             conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
             st.success(f"目標期日を {new_goal_str} に更新しました！")
             time.sleep(1)
             st.rerun()
-            
     except Exception as e:
         st.error(f"目標期日の読み込みエラー: {e}")
 
-    # --- 📅 休日（勉強しない日）設定エリア ---
     st.divider()
     st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
-
     try:
-        # 休日データの読み込み
-        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+        # 🌟 【改善】キャッシュを10分(600秒)に大幅アップ
+        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
         if 'user' not in holiday_df.columns:
             holiday_df = pd.DataFrame(columns=['user', 'holiday_date'])
         
-        # 現在の自分の休日リストを取得（重複を消して日付順に並べる）
-        my_holidays = holiday_df[holiday_df['user'] == current_user]['holiday_date'].dropna().tolist()
-        my_holidays = sorted(list(set(my_holidays)))
+        my_holidays = sorted(list(set(holiday_df[holiday_df['user'] == current_user]['holiday_date'].dropna().tolist())))
 
         col_h1, col_h2 = st.columns(2)
-        
         with col_h1:
             st.markdown("##### ➕ 休日の追加")
-            selected_dates = st.date_input(
-                "休みにする日（または期間）を選択",
-                value=[], 
-                help="1日だけ選ぶか、開始日と終了日をクリックして期間を選べます"
-            )
-            
-            if st.button("休日を追加する"):
+            selected_dates = st.date_input("休みにする日（または期間）を選択", value=[], key="holiday_date_input")
+            if st.button("休日を追加する", key="add_holiday_btn"):
                 new_dates = []
                 if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-                    # 期間（連休）が選ばれた場合
                     start_d, end_d = selected_dates
-                    days_between = (end_d - start_d).days
-                    new_dates = [(start_d + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(days_between + 1)]
+                    new_dates = [(start_d + timedelta(days=i)).strftime('%Y-%m-%d') for i in range((end_d - start_d).days + 1)]
                 elif isinstance(selected_dates, tuple) and len(selected_dates) == 1:
                     new_dates = [selected_dates[0].strftime('%Y-%m-%d')]
                 elif selected_dates is not None and not isinstance(selected_dates, tuple):
-                    # 1日だけ選ばれた場合
                     new_dates = [selected_dates.strftime('%Y-%m-%d')]
 
                 if new_dates:
-                    # 既存の休日と合体させて重複を消す
                     updated_holidays = sorted(list(set(my_holidays + new_dates)))
-                    
                     other_users_holidays = holiday_df[holiday_df['user'] != current_user]
-                    new_my_holidays = pd.DataFrame({
-                        'user': [current_user] * len(updated_holidays),
-                        'holiday_date': updated_holidays
-                    })
-                    updated_holiday_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
-                    
-                    conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_holiday_df)
-                    st.success(f"{len(new_dates)}日分の休日を追加しました！")
+                    new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
+                    conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
+                    st.success(f"{len(new_dates)}日分追加しました！")
                     time.sleep(1)
                     st.rerun()
-                else:
-                    st.warning("日付を選択してください。")
 
         with col_h2:
             st.markdown("##### 🗑️ 登録済みの休日")
             if my_holidays:
-                to_remove = st.multiselect("予定が変わって勉強する日（選択して削除）", my_holidays)
-                if st.button("選択した休日をリストから消す"):
+                to_remove = st.multiselect("削除する日を選択", my_holidays, key="remove_holiday_select")
+                if st.button("選択した休日を消す", key="remove_holiday_btn"):
                     if to_remove:
                         updated_holidays = [d for d in my_holidays if d not in to_remove]
-                        
                         other_users_holidays = holiday_df[holiday_df['user'] != current_user]
-                        new_my_holidays = pd.DataFrame({
-                            'user': [current_user] * len(updated_holidays),
-                            'holiday_date': updated_holidays
-                        })
-                        updated_holiday_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
-                        
-                        conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_holiday_df)
+                        new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
+                        conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
                         st.success("休日を取り消しました！")
                         time.sleep(1)
                         st.rerun()
-                    else:
-                        st.warning("削除する日付を選択してください。")
             else:
-                st.write("現在、登録されている休日はありません。")
+                st.write("登録されている休日はありません。")
 
     except Exception as e:
         st.error(f"休日設定の読み込みエラー: {e}")
 
     # 🚩 各ユーザーの苦手単元ワースト
+    st.divider()
     st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
-    
     cols = st.columns(len(USER_CONFIG.keys()))
-    
     for idx, user in enumerate(USER_CONFIG.keys()):
         with cols[idx]:
             st.markdown(f"**👤 {user}の弱点**")
             u_df = full_df_ana[full_df_ana['user'] == user].copy()
-            
-            if u_df.empty:
-                st.info("データ未生成")
-                continue
+            if not u_df.empty:
+                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
+                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
+                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
+                u_res = u_df.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level_num', lambda x: (x >= 3).sum()), done_q=('is_done', 'sum')).reset_index()
+                u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
+                worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
+                if not worst.empty:
+                    for r in worst.itertuples():
+                        st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
+                else:
+                    st.success("弱点なし")
 
-            u_df['単元'] = u_df['q_num'].str.split('No').str[0]
-            u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-            u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-            
-            u_res = u_df.groupby(['field', '単元']).agg(
-                total=('q_num', 'count'),
-                correct=('level_num', lambda x: (x >= 3).sum()),
-                done_q=('is_done', 'sum')
-            ).reset_index()
-            
-            u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
-            worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
-            
-            if not worst.empty:
-                for r in worst.itertuples():
-                    st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
-            else:
-                st.success("弱点データなし\n（または未着手）")
-            
+
+
+
+
+
+
 elif mode_select == mono_label:
     st.title(f"📝 {mono_label.replace(' 🔴', '')}")
     
