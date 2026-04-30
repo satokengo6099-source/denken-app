@@ -385,23 +385,37 @@ def check_and_trigger_report():
     except Exception as e:
         st.error(f"朝のレポート送信エラー: {e}")
 
-    # --- B. 20時の未完了警告送信 ---
-    # 🌟 ここを 22 から 20 に変更しました
+
+
+# --- B. 20時の未完了警告送信 ---
     if now_hour >= 20:
         try:
-            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=1200)
-            # 🌟 ログのタイプ名も 20h_warning に更新
+            # 🌟 【鉄壁防御】読み込み失敗や、シートが空っぽの場合は空の枠組みを作る
+            try:
+                logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=1200)
+                # 'date'列が存在しない（シートが空）場合の対策
+                if 'date' not in logs.columns:
+                    logs = pd.DataFrame(columns=['date', 'user', 'type'])
+            except:
+                logs = pd.DataFrame(columns=['date', 'user', 'type'])
+            
+            # ログのタイプ名も 20h_warning に更新
             warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '20h_warning')]
             
             if warning_sent.empty:
                 full_df = load_full_data()
+                
+                # 🌟 休日データも同様に防御
                 try:
                     h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
+                    if 'user' not in h_df.columns:
+                        h_df = pd.DataFrame(columns=['user', 'holiday_date'])
                 except:
                     h_df = pd.DataFrame(columns=['user', 'holiday_date'])
 
                 unfinished = []
                 for user in USER_CONFIG.keys():
+                    # 休日の人はスキップ
                     if not h_df.empty and 'user' in h_df.columns:
                         user_holidays = h_df[h_df['user'] == user]['holiday_date'].tolist()
                         if today_str in user_holidays:
@@ -412,7 +426,7 @@ def check_and_trigger_report():
                         unfinished.append(f"・{user} (現在{done_today}問)")
                 
                 if unfinished:
-                    # 🌟 メッセージ内の文言も 20時 に変更
+                    # メッセージ内の文言も 20時 に変更
                     warn_msg = "🚨 【緊急警告：20時】\n以下の怠慢者がノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\n日付が変わる前に挽回しましょう。"
                     if send_line_notification(warn_msg):
                         new_log = pd.DataFrame([[today_str, "system", "20h_warning"]], columns=["date", "user", "type"])
