@@ -389,12 +389,28 @@ def check_unread_monologue(current_user):
 
 # --- 5. メニュー切り替えとサイドバー（通知・進捗） ---
 
-# 独り言の未読チェック
+st.sidebar.title("⚡ 電験学習管理システム")
+
+# 🌟 1. 【復活】ここでユーザーを選択・決定する！
+current_user = st.sidebar.selectbox("👤 ユーザーを選択", list(USER_CONFIG.keys()))
+
+# 🌟 2. 【復活】選ばれたユーザーのデータを読み込む（これがないと後でエラーになります）
+full_df_main = load_full_data()
+if 'db' not in st.session_state or st.session_state.get('current_user') != current_user:
+    st.session_state.db = sync_user_data(full_df_main, current_user)
+    st.session_state.current_user = current_user
+db = st.session_state.db
+
+# 🌟 3. 自動通知のチェックを走らせる
+check_and_trigger_report()
+
+# 🌟 4. ユーザーが決まったので未読チェックができる！
 has_unread = check_unread_monologue(current_user)
 mono_label = "ただの独り言 🔴" if has_unread else "ただの独り言"
 
 st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
+
 
 # 📅 試験日カウントダウンと進捗計算
 # 🌟 本試験の日付（固定）
