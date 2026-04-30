@@ -861,19 +861,20 @@ elif mode_select == "分析ダッシュボード":
                     st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
             else:
                 st.success("弱点データなし\n（または未着手）")
-
+            
 elif mode_select == mono_label:
     st.title(f"📝 {mono_label.replace(' 🔴', '')}")
     
     # 既読更新
     try:
-        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus")
+        # 🌟 ここに ttl=60 を追加！
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=60)
         status_df.loc[status_df['user'] == current_user, 'last_read_at'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
         conn.update(spreadsheet=target_url, worksheet="ReadStatus", data=status_df)
     except Exception as e:
         st.error(f"既読状態の更新に失敗しました。ReadStatusシートを確認してください。")
 
-    # 投稿フォーム（🌟 ダブっていたものを1つに統一し、LINE通知付きのものを残しました）
+    # 投稿フォーム
     with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
         note_content = st.text_area("内容（Markdown対応）")
         uploaded_file = st.file_uploader("資料をアップロード", type=['pdf', 'png', 'jpg', 'jpeg'])
@@ -891,7 +892,8 @@ elif mode_select == mono_label:
                 new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], 
                                        columns=["date", "user", "content", "file_name"])
                 try:
-                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
+                    # 🌟 ここも ttl=15 から ttl=60 に変更！
+                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
                     updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
                     conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
                     
@@ -907,7 +909,9 @@ elif mode_select == mono_label:
     # タイムライン表示
     st.divider()
     try:
-        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=15)
+        # 🌟 表示エラーの元凶！ここも ttl=15 から ttl=60 に変更！
+        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
+        
         if not display_mono.empty:
             display_mono.columns = display_mono.columns.str.strip()
             display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
@@ -933,7 +937,9 @@ elif mode_select == mono_label:
         else:
             st.info("まだ投稿がありません。最初の独り言をどうぞ。")
     except Exception as e:
-        st.error(f"表示エラー: {e}")
+        st.error(f"表示エラー: {e}") 
+
+
 # --- 7. 共通の問題表示・解答エリア ---
 if mode_select in ["学習モード", "復習モード"]:
     if st.session_state.get("test_pool"):
