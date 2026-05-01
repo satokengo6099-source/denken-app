@@ -791,18 +791,28 @@ if mode_select == "分析ダッシュボード":
         with col_p2:
             st.markdown("##### 📖 分野ごとの単元別理解度")
             attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
-            unique_fields = attempted['field'].unique()
-            for field_name in unique_fields:
-                st.markdown(f"###### 📘 {field_name}")
-                field_data = attempted[attempted['field'] == field_name]
-                unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
-                chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
-                    x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                    y=alt.Y('unit', title='単元', sort='-x'),
-                    color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
-                    tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-                ).properties(height=200)
-                st.altair_chart(chart_unit, use_container_width=True)
+            
+            # 🌟 リスト化してタブを生成
+            unique_fields = list(attempted['field'].unique())
+            if unique_fields:
+                tabs = st.tabs(unique_fields)
+                
+                # 各タブの中にグラフを配置
+                for idx, field_name in enumerate(unique_fields):
+                    with tabs[idx]:
+                        field_data = attempted[attempted['field'] == field_name]
+                        unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
+                        
+                        # 🌟 単元の数に合わせてグラフの高さを自動計算（最低200px、1単元につき40px）
+                        chart_height = max(200, len(unit_acc) * 40)
+                        
+                        chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
+                            x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                            y=alt.Y('unit', title='単元', sort='-x'),
+                            color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
+                            tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+                        ).properties(height=chart_height)
+                        st.altair_chart(chart_unit, use_container_width=True)
     else:
         st.info("解答データがありません。")
 
