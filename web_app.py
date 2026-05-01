@@ -628,15 +628,13 @@ st.sidebar.markdown("""
 # 1️⃣ 分析ダッシュボード
 if mode_select == "分析ダッシュボード":
     st.title(f"📊 分析ダッシュボード：{current_user}")
-    
     full_df_ana = load_full_data()
     
     try:
         time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=600)
         time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
         time_df['study_minutes'] = time_df['study_seconds'] / 60.0
-        if 'field' not in time_df.columns:
-            time_df['field'] = '未分類'
+        if 'field' not in time_df.columns: time_df['field'] = '未分類'
         time_df['field'] = time_df['field'].fillna('未分類')
         time_df.loc[time_df['field'] == '', 'field'] = '未分類'
     except:
@@ -667,23 +665,19 @@ if mode_select == "分析ダッシュボード":
         comparison.append({"ユーザー": user, "進捗率": f"{rate}%"})
     st.table(pd.DataFrame(comparison))
 
+    # --- 🌟 ここから学習時間推移（空日0分対応版） ---
     st.divider()
     st.subheader("⏱️ メンバー学習時間推移")
     
     if not time_df.empty:
-        # 🌟 グラフの色を各ユーザーで完全に固定する
         user_list = sorted(time_df['user'].unique().tolist())
         color_scale = alt.Scale(domain=user_list, scheme='tableau10')
 
-        # 日ごとに全ユーザーの学習時間を集計（折れ線グラフ用）
         daily_df = time_df.groupby(['date', 'user'])['study_minutes'].sum().reset_index()
-        # 累計データ（棒グラフ用）
         total_data = time_df.groupby('user')['study_minutes'].sum().reset_index()
         
-        # 🌟 タブを作成
         tab_w, tab_m, tab_t = st.tabs(["📅 週間推移", "🗓️ 月間推移", "🏆 累計学習"])
         
-        # --- 📅 タブ1：週間推移（折れ線グラフ） ---
         with tab_w:
             st.markdown("##### 📅 週間推移 (月曜始まり)")
             try:
@@ -695,7 +689,6 @@ if mode_select == "分析ダッシュボード":
             oldest_monday = min_date - timedelta(days=min_date.weekday())
             current_monday = datetime.today().date() - timedelta(days=datetime.today().date().weekday())
             
-            # 選択肢のリストを作成
             week_choices = []
             temp_monday = current_monday
             while temp_monday >= oldest_monday:
@@ -711,20 +704,15 @@ if mode_select == "分析ダッシュボード":
             
             week_dates = [(start_of_week + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7)]
             
-            # 🌟 修正ポイント1：勉強していない日もグラフを「0分」に落とすための空データを作成
             empty_w_records = [{'date': d, 'user': u, 'study_minutes': 0.0} for d in week_dates for u in user_list]
             empty_w_df = pd.DataFrame(empty_w_records)
             
-            # 実際のデータと合体させる
             week_data = daily_df[daily_df['date'].isin(week_dates)]
             merged_w_df = pd.concat([empty_w_df, week_data]).groupby(['date', 'user'], as_index=False)['study_minutes'].sum()
-            
-            # 表示用に短い日付（MM/DD）の列を作る
             merged_w_df['display_date'] = pd.to_datetime(merged_w_df['date']).dt.strftime('%m/%d')
             
             if merged_w_df['study_minutes'].sum() > 0:
                 chart_w = alt.Chart(merged_w_df).mark_line(point=True, size=3).encode(
-                    # 🌟 修正ポイント2：X軸を「順序データ (O)」に指定し、必ず7日分均等に並べる
                     x=alt.X('display_date:O', title='日付', sort=None, axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
                     color=alt.Color('user:N', title='ユーザー', scale=color_scale),
@@ -734,7 +722,6 @@ if mode_select == "分析ダッシュボード":
             else: 
                 st.info("この週の学習記録はありません。")
                 
-        # --- 🗓️ タブ2：月間推移（折れ線グラフ） ---
         with tab_m:
             st.markdown("##### 🗓️ 月間推移")
             col_y, col_m = st.columns(2)
@@ -749,7 +736,6 @@ if mode_select == "分析ダッシュボード":
             _, num_days = calendar.monthrange(sel_year, sel_month)
             month_dates = [f"{sel_year}-{sel_month:02d}-{d:02d}" for d in range(1, num_days + 1)]
             
-            # 🌟 月間も同様に、全日分の「0分」の空データを作成して合体
             empty_m_records = [{'date': d, 'user': u, 'study_minutes': 0.0} for d in month_dates for u in user_list]
             empty_m_df = pd.DataFrame(empty_m_records)
             
@@ -761,7 +747,6 @@ if mode_select == "分析ダッシュボード":
             
             if merged_m_df['study_minutes'].sum() > 0:
                 chart_m = alt.Chart(merged_m_df).mark_line(point=True, size=3).encode(
-                    # 🌟 月間は日付が多いので、時間データ (T) として扱い適度に目盛りを間引く
                     x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d', tickCount=10)),
                     y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
                     color=alt.Color('user:N', title='ユーザー', scale=color_scale),
@@ -771,7 +756,6 @@ if mode_select == "分析ダッシュボード":
             else: 
                 st.info("この月の学習記録はありません。")
 
-        # --- 🏆 タブ3：累計学習（棒グラフ） ---
         with tab_t:
             st.markdown("##### 🏆 累計学習時間")
             if not total_data.empty:
@@ -786,48 +770,8 @@ if mode_select == "分析ダッシュボード":
                 st.info("記録なし")
     else:
         st.info("学習時間の記録がまだありません。")
-            
-        # --- 🗓️ タブ2：月間推移（折れ線グラフ） ---
-        with tab_m:
-            st.markdown("##### 🗓️ 月間推移")
-            col_y, col_m = st.columns(2)
-            today_date = datetime.today()
-            
-            with col_y:
-                sel_year = st.selectbox("年を選択", [today_date.year, today_date.year-1, today_date.year-2], index=0, key="month_year")
-            with col_m:
-                sel_month = st.selectbox("月を選択", list(range(1, 13)), index=today_date.month-1, key="month_month")
-                
-            month_prefix = f"{sel_year}-{sel_month:02d}"
-            month_data = daily_df[daily_df['date'].str.startswith(month_prefix, na=False)]
-            
-            if not month_data.empty:
-                chart_m = alt.Chart(month_data).mark_line(point=True, size=3).encode(
-                    x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d')),
-                    y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
-                    color=alt.Color('user:N', title='ユーザー', scale=color_scale),
-                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('date:T', title='日付', format='%Y/%m/%d'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
-                ).properties(height=350)
-                st.altair_chart(chart_m, use_container_width=True)
-            else: 
-                st.info("この月の学習記録はありません。")
-            
-        # --- 🏆 タブ3：累計学習（棒グラフ） ---
-        with tab_t:
-            st.markdown("##### 🏆 累計学習時間")
-            if not total_data.empty:
-                chart_t = alt.Chart(total_data).mark_bar().encode(
-                    x=alt.X('user:N', title='ユーザー'),
-                    y=alt.Y('study_minutes:Q', title='累計学習時間 (分)'),
-                    color=alt.Color('user:N', title='ユーザー', scale=color_scale),
-                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
-                ).properties(height=350)
-                st.altair_chart(chart_t, use_container_width=True)
-            else: 
-                st.info("記録なし")
-    else:
-        st.info("学習時間の記録がまだありません。")
 
+    # --- 🌟 ここから個人ダッシュボード（単元別タブ対応） ---
     st.divider()
     st.header(f"👤 {current_user} 専用ダッシュボード")
     st.caption("※このデータはあなたしか見ることができません。")
@@ -856,18 +800,15 @@ if mode_select == "分析ダッシュボード":
             st.markdown("##### 📖 分野ごとの単元別理解度")
             attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
             
-            # 🌟 リスト化してタブを生成
             unique_fields = list(attempted['field'].unique())
             if unique_fields:
                 tabs = st.tabs(unique_fields)
                 
-                # 各タブの中にグラフを配置
                 for idx, field_name in enumerate(unique_fields):
                     with tabs[idx]:
                         field_data = attempted[attempted['field'] == field_name]
                         unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
                         
-                        # 🌟 単元の数に合わせてグラフの高さを自動計算（最低200px、1単元につき40px）
                         chart_height = max(200, len(unit_acc) * 40)
                         
                         chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
@@ -893,29 +834,6 @@ if mode_select == "分析ダッシュボード":
                     tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
                 ).properties(height=300)
                 st.altair_chart(chart_time, use_container_width=True)
-
-
-    st.divider()
-    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
-    cols = st.columns(len(USER_CONFIG.keys()))
-    for idx, user in enumerate(USER_CONFIG.keys()):
-        with cols[idx]:
-            st.markdown(f"**👤 {user}の弱点**")
-            u_df = full_df_ana[full_df_ana['user'] == user].copy()
-            if not u_df.empty:
-                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
-                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-                u_res = u_df.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level_num', lambda x: (x >= 3).sum()), done_q=('is_done', 'sum')).reset_index()
-                u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
-                worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
-                if not worst.empty:
-                    for r in worst.itertuples():
-                        st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
-                else:
-                    st.success("弱点なし")    
-
-
 
     st.divider()
     st.info(f"💡 {current_user}さんの目標設定")
@@ -990,7 +908,25 @@ if mode_select == "分析ダッシュボード":
     except Exception as e:
         st.error(f"休日設定の読み込みエラー: {e}")
 
-
+    st.divider()
+    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
+    cols = st.columns(len(USER_CONFIG.keys()))
+    for idx, user in enumerate(USER_CONFIG.keys()):
+        with cols[idx]:
+            st.markdown(f"**👤 {user}の弱点**")
+            u_df = full_df_ana[full_df_ana['user'] == user].copy()
+            if not u_df.empty:
+                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
+                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
+                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
+                u_res = u_df.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level_num', lambda x: (x >= 3).sum()), done_q=('is_done', 'sum')).reset_index()
+                u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
+                worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
+                if not worst.empty:
+                    for r in worst.itertuples():
+                        st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
+                else:
+                    st.success("弱点なし")
 
 # 2️⃣ 独り言掲示板
 elif mode_select == mono_label:
@@ -1194,7 +1130,6 @@ elif mode_select in ["学習モード", "復習モード"]:
             st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
             st.rerun()
 
-    
     # 🌟 B. 進行中のテストがない場合は、それぞれの「準備画面」を表示
     else:
         if "dash_full_df" not in st.session_state:
