@@ -9,31 +9,34 @@ import json
 import time
 import altair as alt  # 👈 ファイルの先頭付近に追加！
 
+# ==========================================
+# 🌟 【事前準備】保存関数（コードの最上段、load_full_dataの下あたりに配置）
+# ==========================================
 def save_study_results():
-    """溜まったデータを一括保存する（API節約用）"""
+    """あなたが決めた『4つのタイミング』のみで動く一括保存関数"""
     if st.session_state.get("unsaved_count", 0) == 0 and st.session_state.get("pending_time", 0) <= 0:
         return
         
     try:
-        with st.spinner('データをクラウドに同期中...'):
-            # 学習時間を更新
+        with st.spinner('クラウドと同期中...'):
+            # 学習時間を更新（タイミング3, 4）
             if st.session_state.pending_time > 0:
-                # フィールド名は現在の問題から取得
-                field = st.session_state.test_pool[0]['field'] if st.session_state.test_pool else "未分類"
-                update_study_time(current_user, st.session_state.pending_time, field)
+                curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                update_study_time(current_user, st.session_state.pending_time, curr_field)
             
             # メインデータを一括書き込み
             full = load_full_data()
             other_users = full[full['user'] != current_user]
+            # 自分の最新データ(st.session_state.db)を合体
             new_full = pd.concat([other_users, st.session_state.db], ignore_index=True)
             conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
             
-            # リセット
+            # 成功したら状態をリセット
             st.session_state.pending_time = 0
             st.session_state.unsaved_count = 0
-            st.toast("✅ クラウドに保存しました！")
+            st.toast("✅ クラウドへの同期が完了しました！")
     except Exception as e:
-        st.error(f"保存エラー: {e}")
+        st.error(f"同期エラー: {e}")
 
 # 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
@@ -645,65 +648,79 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- 6. メインコンテンツの分岐（メニュー画面の表示） ---
-# 🌟 ここでは「どの問題を解くか選ぶまで」の画面を作ります。
+# ==========================================
+# --- 6. メインコンテンツの分岐 ---
+# ==========================================
 
-# 画面がごちゃつかないよう、問題を解いている最中（test_poolがある時）はメニューを隠します
-if not st.session_state.get("test_pool"):
+# 1. イントロダクション（パスワード保護版）
+if mode_select == "イントロダクション":
+    # 以前作成したイントロダクションのコードをここに
+    st.title("📚 イントロダクション")
+    st.write("資料閲覧システムを表示します...")
+    # (中略：以前のコードをそのまま使用)
+
+# 2. 学習・復習モードの「準備画面」
+elif mode_select in ["学習モード", "復習モード"] and not st.session_state.get("test_pool"):
+    # 🌟 タイミング1：モード選択時に最新データを取得
+    if "dash_full_df" not in st.session_state:
+        st.session_state.dash_full_df = load_full_data()
     
     if mode_select == "学習モード":
-        st.title(f"⚡ 学習モード：{current_user}")
-        # 未着手問題を抽出
-        unstarted = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
-        fields = ["すべて"] + sorted(list(set(q["field"] for q in unstarted)))
-        selected_field = st.selectbox("分野を選択", fields)
-        pool = [q for q in unstarted if selected_field == "すべて" or q["field"] == selected_field]
+        st.title(f"⚡ 学習：{current_user}")
+        # 未着手のみを抽出（last_dateが空）
+        unstarted = db[db['last_date'].isin(["", "nan", "NaN", "None", "<NA>"])]
+        fields = ["すべて"] + sorted(unstarted['field'].unique().tolist())
+        selected_field = st.selectbox("学習する分野を選択", fields)
+        
+        pool = unstarted if selected_field == "すべて" else unstarted[unstarted['field'] == selected_field]
         
         if st.button("🚀 学習開始", use_container_width=True):
-            st.session_state.test_pool = pool
+            # 🌟 タイミング2：開始時に改めてデータを整理
+            st.session_state.test_pool = pool.to_dict('records')
             st.session_state.history = []
             st.rerun()
 
     elif mode_select == "復習モード":
-        st.title(f"🔄 復習モード：{current_user}")
+        st.title(f"🔄 復習：{current_user}")
         # 実施済み かつ レベル5未満 を抽出
-        review_data = [q for q in db.to_dict('records') if str(q.get("last_date", "")) not in ["", "nan", "None", "NaN"] and int(q.get("level", 0)) < 5]
-        # 弱点順に並び替え
-        review_data.sort(key=lambda x: (str(x.get("field", "")), int(x.get("level", 0)), str(x.get("q_num", ""))))
+        review_df = db[(~db['last_date'].isin(["", "nan", "NaN", "None", "<NA>"])) & (db['level'] < 5)].copy()
         
+        # 🌟 ここが「変」を直すキモ：Pandasで厳密にソート（分野 -> 点数昇順 -> 問題番号）
+        review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
+        
+        st.info(f"現在の復習対象: {len(review_df)} 問")
         if st.button("🔥 復習開始", use_container_width=True):
-            st.session_state.test_pool = review_data
+            # 🌟 タイミング2：開始時にリスト化
+            st.session_state.test_pool = review_df.to_dict('records')
             st.session_state.history = []
             st.rerun()
 
-    elif mode_select == "分析ダッシュボード":
-        st.title(f"📊 分析：{current_user}")
-        # （ここに以前の分析用コード：グラフ表示などを入れる）
-        pass
+# 3. 分析ダッシュボード
+elif mode_select == "分析ダッシュボード":
+    # 以前作成したタブ・折れ線グラフ・過去振り返り機能付きのダッシュボードをここに
+    # (中略)
+    pass
 
-    elif mode_select == mono_label:
-        st.title(f"💬 {mono_label}")
-        # （ここに以前の掲示板コードを入れる）
-        pass
+# 4. 独り言掲示板
+elif mode_select == mono_label:
+    # 以前作成した掲示板コードをここに
+    # (中略)
+    pass
 
-# --- 7. 共通の問題表示・解答エリア（Section 6の「外」に配置） ---
-# 🌟 ここが「実際に問題を解く画面」です。test_poolがある時だけ出現します。
-
+# ==========================================
+# --- 7. 共通の問題表示・解答エリア ---
+# ==========================================
+# モード分岐の「外」に置くことで、学習・復習中なら常にこの画面を最優先する
 if st.session_state.get("test_pool"):
-    # 初期設定（メモリ上のみ）
+    # 初期化
     if "pending_time" not in st.session_state: st.session_state.pending_time = 0
     if "unsaved_count" not in st.session_state: st.session_state.unsaved_count = 0
     if "last_time" not in st.session_state: st.session_state.last_time = time.time()
 
     curr = st.session_state.test_pool[0]
+    st.divider()
     st.subheader(f"【{curr['field']}】 {curr['q_num']}")
     
-    # 🚀 終了ボタン（タイミング4：終了して保存）
-    if st.button("⏹️ 終了してデータを記録", type="primary"):
-        save_study_results() # ← 別途定義した保存関数
-        st.session_state.test_pool = []
-        st.rerun()
-
     # 解答ボタン（0〜5点）
     cols = st.columns(6)
     for i in range(6):
@@ -716,18 +733,33 @@ if st.session_state.get("test_pool"):
             idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
             st.session_state.db.loc[idx, ['level', 'last_date']] = [i, datetime.today().strftime('%Y-%m-%d')]
             
-            # 3. カウントアップと履歴保存
+            # 3. 未保存カウント
             st.session_state.unsaved_count += 1
             st.session_state.history.append(curr)
             
-            # 4. タイミング3：5問ごとに一括保存
+            # 🌟 タイミング3：5問ごとに自動同期
             if st.session_state.unsaved_count >= 5:
                 save_study_results()
             
             st.session_state.test_pool.pop(0)
             st.rerun()
 
-    # スキップボタン
-    if st.button("⏭️ 後回しにする"):
-        st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
-        st.rerun()
+    # 下部操作エリア
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("↩️ 戻る", disabled=not st.session_state.history, use_container_width=True):
+            last = st.session_state.history.pop()
+            st.session_state.test_pool.insert(0, last)
+            st.session_state.unsaved_count = max(0, st.session_state.unsaved_count - 1)
+            st.rerun()
+    with c2:
+        if st.button("⏭️ 後回し", use_container_width=True):
+            st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
+            st.rerun()
+    with c3:
+        # 🌟 タイミング4：終了して一括保存
+        if st.button("⏹️ 終了・保存", type="primary", use_container_width=True):
+            save_study_results()
+            st.session_state.test_pool = []
+            st.rerun()
