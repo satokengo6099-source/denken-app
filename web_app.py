@@ -865,6 +865,33 @@ elif mode_select == "分析ダッシュボード":
                     tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
                 ).properties(height=300)
                 st.altair_chart(chart_time, use_container_width=True)
+    
+
+    # --- 🚩 各ユーザーの苦手単元ワースト ---
+    st.divider()
+    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
+    cols = st.columns(len(USER_CONFIG.keys()))
+    for idx, user in enumerate(USER_CONFIG.keys()):
+        with cols[idx]:
+            st.markdown(f"**👤 {user}の弱点**")
+            u_df = full_df_ana[full_df_ana['user'] == user].copy()
+            if not u_df.empty:
+                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
+                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
+                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
+                attempted_df = u_df[u_df['is_done']].copy()
+                if not attempted_df.empty:
+                    attempted_df['理解度'] = (attempted_df['level_num'] / 5.0) * 100
+                    u_res = attempted_df.groupby(['field', '単元'])['理解度'].mean().reset_index()
+                    u_res['理解度'] = u_res['理解度'].round(1)
+                    worst = u_res.sort_values('理解度').head(7)
+                    if not worst.empty:
+                        for r in worst.itertuples():
+                            st.error(f"{r.field}：{r.単元}\n({r.理解度}%)")
+                    else:
+                        st.success("弱点なし")
+                else:
+                    st.success("弱点データなし\n（または未着手）")
 
     # --- 📅 目標期日 ＆ 休日設定エリア ---
     st.divider()
@@ -943,31 +970,7 @@ elif mode_select == "分析ダッシュボード":
     except Exception as e:
         st.error(f"休日設定エラー: {e}")
 
-    # --- 🚩 各ユーザーの苦手単元ワースト ---
-    st.divider()
-    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
-    cols = st.columns(len(USER_CONFIG.keys()))
-    for idx, user in enumerate(USER_CONFIG.keys()):
-        with cols[idx]:
-            st.markdown(f"**👤 {user}の弱点**")
-            u_df = full_df_ana[full_df_ana['user'] == user].copy()
-            if not u_df.empty:
-                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
-                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-                attempted_df = u_df[u_df['is_done']].copy()
-                if not attempted_df.empty:
-                    attempted_df['理解度'] = (attempted_df['level_num'] / 5.0) * 100
-                    u_res = attempted_df.groupby(['field', '単元'])['理解度'].mean().reset_index()
-                    u_res['理解度'] = u_res['理解度'].round(1)
-                    worst = u_res.sort_values('理解度').head(7)
-                    if not worst.empty:
-                        for r in worst.itertuples():
-                            st.error(f"{r.field}：{r.単元}\n({r.理解度}%)")
-                    else:
-                        st.success("弱点なし")
-                else:
-                    st.success("弱点データなし\n（または未着手）")
+    
 
 
 
