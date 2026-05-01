@@ -206,8 +206,9 @@ target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 def load_full_data():
     """スプレッドシートから全データを読み込み、型を整える"""
     try:
-        # Sheet1（メインの学習記録）を読み込み
-        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4], ttl=15)
+        # 🌟 【爆速化の要】ttl=15 から ttl=600 (10分) に大幅アップ！
+        # これにより、解答ボタンを押すたびに発生していた通信ラグが消滅します。
+        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4], ttl=600)
         df = df.dropna(how="all")
         
         # 型の強制固定（エラー防止）
