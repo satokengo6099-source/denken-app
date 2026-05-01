@@ -1136,15 +1136,15 @@ elif mode_select in ["学習モード", "復習モード"]:
         if "dash_full_df" not in st.session_state:
             st.session_state.dash_full_df = load_full_data()
 
-        # 🌟 日付「YYYY-MM-DD」特有の「- (ハイフン)」が含まれるかだけで判定
-        is_unstarted = ~st.session_state.db['last_date'].astype(str).str.contains("-", na=False)
+        # 🌟 【絶対判定フラグ】日付に「- (ハイフン)」が含まれていれば「解いたことがある（着手済み）」
+        is_started = st.session_state.db['last_date'].astype(str).str.contains("-", na=False)
 
         # 1️⃣ 学習モードの準備画面（未着手のみ）
         if mode_select == "学習モード":
             st.title(f"⚡ 学習：{current_user}")
             
-            # ハイフンが無い（未着手）データだけを抽出
-            unstarted_df = st.session_state.db[is_unstarted].copy()
+            # 🌟 「着手済みではない（~is_started）」データ ＝ 未着手
+            unstarted_df = st.session_state.db[~is_started].copy()
 
             if unstarted_df.empty:
                 st.success("🎉 おめでとうございます！すべての問題を一度は解きました。復習モードへ進みましょう！")
@@ -1157,17 +1157,17 @@ elif mode_select in ["学習モード", "復習モード"]:
 
                 st.info(f"対象： **{selected_field}** （未着手問題：{len(final_pool_df)}問）")
                 
-                # 🌟 コールバック（on_click）を使ってバグを回避し、確実にスタートさせる！
+                # コールバックで確実にスタート
                 st.button("🚀 この内容で学習を開始する", use_container_width=True, on_click=start_test, args=(final_pool_df,))
 
         # 2️⃣ 復習モードの準備画面（着手済み ＆ 5点未満 ＆ 苦手順）
         elif mode_select == "復習モード":
             st.title(f"🔄 復習：{current_user}")
             
-            # 🌟 一度解いたことがあり（~is_unstarted）、満点（5点）未満の問題を抽出
-            review_df = st.session_state.db[(~is_unstarted) & (st.session_state.db['level'].astype(int) < 5)].copy()
+            # 🌟 「着手済みである（is_started）」 かつ 「満点（5点）未満」を抽出
+            review_df = st.session_state.db[is_started & (st.session_state.db['level'].astype(int) < 5)].copy()
             
-            # 🌟 分野ごとにまとめ、点数が低い順（0点→1点→2点...）にソート
+            # 分野ごとにまとめ、点数が低い順（0点→1点→2点...）にソート
             review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
             
             if review_df.empty:
@@ -1175,6 +1175,5 @@ elif mode_select in ["学習モード", "復習モード"]:
             else:
                 st.info(f"現在の復習対象: {len(review_df)} 問")
                 
-                # 🌟 コールバック（on_click）を使ってバグを回避し、確実にスタートさせる！
+                # コールバックで確実にスタート
                 st.button("🔥 復習開始", use_container_width=True, on_click=start_test, args=(review_df,))
-                
