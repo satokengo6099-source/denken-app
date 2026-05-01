@@ -9,6 +9,32 @@ import json
 import time
 import altair as alt  # 👈 ファイルの先頭付近に追加！
 
+def save_study_results():
+    """溜まったデータを一括保存する（API節約用）"""
+    if st.session_state.get("unsaved_count", 0) == 0 and st.session_state.get("pending_time", 0) <= 0:
+        return
+        
+    try:
+        with st.spinner('データをクラウドに同期中...'):
+            # 学習時間を更新
+            if st.session_state.pending_time > 0:
+                # フィールド名は現在の問題から取得
+                field = st.session_state.test_pool[0]['field'] if st.session_state.test_pool else "未分類"
+                update_study_time(current_user, st.session_state.pending_time, field)
+            
+            # メインデータを一括書き込み
+            full = load_full_data()
+            other_users = full[full['user'] != current_user]
+            new_full = pd.concat([other_users, st.session_state.db], ignore_index=True)
+            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
+            
+            # リセット
+            st.session_state.pending_time = 0
+            st.session_state.unsaved_count = 0
+            st.toast("✅ クラウドに保存しました！")
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
+
 # 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
     import streamlit as st
