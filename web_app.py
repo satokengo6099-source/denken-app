@@ -625,465 +625,462 @@ st.sidebar.markdown("""
 # --- 6. メインコンテンツの分岐 ---
 # ==========================================
 
-# 🌟 鎖の始まり：進行中のテストがない時だけメニューを表示する
-if not st.session_state.get("test_pool"):
+# 1️⃣ 分析ダッシュボード
+if mode_select == "分析ダッシュボード":
+    st.title(f"📊 分析ダッシュボード：{current_user}")
     
-    # 1️⃣ 学習モード
-    if mode_select == "学習モード":
-        st.title(f"⚡ 学習：{current_user}")
-        if "dash_full_df" not in st.session_state:
-            st.session_state.dash_full_df = load_full_data()
-        
-        unstarted_df = st.session_state.db[st.session_state.db['last_date'].isin(["", "nan", "None", "NaN", "<NA>"])].copy()
-
-        if unstarted_df.empty:
-            st.success("🎉 おめでとうございます！すべての問題を一度は解きました。復習モードへ進みましょう！")
-        else:
-            field_list = sorted(unstarted_df['field'].unique().tolist())
-            field_options = ["すべて"] + field_list
-            selected_field = st.selectbox("学習する分野（科目）を選んでください", field_options, key="learn_field_select")
-
-            final_pool_df = unstarted_df if selected_field == "すべて" else unstarted_df[unstarted_df['field'] == selected_field]
-
-            st.info(f"対象： **{selected_field}** （未着手問題：{len(final_pool_df)}問）")
-            if st.button("🚀 この内容で学習を開始する", use_container_width=True):
-                st.session_state.test_pool = final_pool_df.to_dict('records')
-                st.session_state.history = []
-                st.rerun()
-
-    # 2️⃣ 復習モード
-    elif mode_select == "復習モード":
-        st.title(f"🔄 復習：{current_user}")
-        if "dash_full_df" not in st.session_state:
-            st.session_state.dash_full_df = load_full_data()
-        
-        review_df = st.session_state.db[(~st.session_state.db['last_date'].isin(["", "nan", "NaN", "None", "<NA>"])) & (st.session_state.db['level'] < 5)].copy()
-        review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
-        
-        st.info(f"現在の復習対象: {len(review_df)} 問")
-        if st.button("🔥 復習開始", use_container_width=True):
-            st.session_state.test_pool = review_df.to_dict('records')
-            st.session_state.history = []
-            st.rerun()
-
-    # 3️⃣ 分析ダッシュボード
-    elif mode_select == "分析ダッシュボード":
-        st.title(f"📊 分析ダッシュボード：{current_user}")
-        full_df_ana = load_full_data()
-        
-        try:
-            time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=600)
-            time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
-            time_df['study_minutes'] = time_df['study_seconds'] / 60.0
-            if 'field' not in time_df.columns:
-                time_df['field'] = '未分類'
-            time_df['field'] = time_df['field'].fillna('未分類')
-            time_df.loc[time_df['field'] == '', 'field'] = '未分類'
-        except:
-            time_df = pd.DataFrame(columns=['user', 'date', 'study_seconds', 'study_minutes', 'field'])
-
-        yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-        user_yesterday = full_df_ana[(full_df_ana['user'] == current_user) & (full_df_ana['last_date'] == yesterday_str)]
-        done_yesterday = len(user_yesterday)
-
-        if done_yesterday == 0:
-            st.error(f"🚨 警告：昨日の進捗は 0 問です。言い訳せずに今日は遅れを取り戻しましょう。")
-        else:
-            st.success(f"✅ 昨日は {done_yesterday} 問の努力が確認されました。")
-
-        st.divider()
-
-        st.subheader("🏁 メンバー進捗比較")
-        comparison = []
-        for user in USER_CONFIG.keys():
-            u_df = full_df_ana[full_df_ana['user'] == user].copy()
-            total = len(u_df)
-            if total > 0:
-                valid_done = u_df[u_df['last_date'].astype(str).str.contains("-", na=False)]
-                done = len(valid_done)
-                rate = round((done / total) * 100, 1)
-            else:
-                rate = 0.0
-            comparison.append({"ユーザー": user, "進捗率": f"{rate}%"})
-        st.table(pd.DataFrame(comparison))
-
-        st.divider()
-        st.subheader("⏱️ メンバー学習時間比較")
-        if not time_df.empty:
-            today_str = datetime.today().strftime('%Y-%m-%d')
-            this_month_prefix = datetime.today().strftime('%Y-%m')
-            
-            today_data = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum().reset_index()
-            month_data = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum().reset_index()
-            total_data = time_df.groupby('user')['study_minutes'].sum().reset_index()
-            
-            col_g1, col_g2, col_g3 = st.columns(3)
-            def create_altair_chart(data, title):
-                return alt.Chart(data).mark_bar().encode(
-                    x=alt.X('user', title='ユーザー'),
-                    y=alt.Y('study_minutes', title='学習時間 (分)'),
-                    color=alt.Color('user', title='ユーザー', scale=alt.Scale(scheme='tableau10')), 
-                    tooltip=[alt.Tooltip('user', title='ユーザー'), alt.Tooltip('study_minutes', title='時間 (分)', format='.1f')]
-                ).properties(title=title)
-
-            with col_g1:
-                st.markdown("##### 📅 今日の学習 (分)")
-                if not today_data.empty and today_data['study_minutes'].sum() > 0:
-                    st.altair_chart(create_altair_chart(today_data, '今日の学習'), use_container_width=True)
-                else: st.info("今日の記録はまだありません")
-                    
-            with col_g2:
-                st.markdown("##### 🗓️ 今月の学習 (分)")
-                if not month_data.empty and month_data['study_minutes'].sum() > 0:
-                    st.altair_chart(create_altair_chart(month_data, '今月の学習'), use_container_width=True)
-                else: st.info("今月の記録はまだありません")
-                    
-            with col_g3:
-                st.markdown("##### 🏆 累計学習 (分)")
-                if not total_data.empty and total_data['study_minutes'].sum() > 0:
-                    st.altair_chart(create_altair_chart(total_data, '累計学習'), use_container_width=True)
-                else: st.info("累計記録はまだありません")
-        else:
-            st.info("学習時間の記録がまだありません。")
-
-        st.divider()
-        st.header(f"👤 {current_user} 専用ダッシュボード")
-        st.caption("※このデータはあなたしか見ることができません。")
-
-        st.subheader("🎯 分野・単元別の正解率（理解度）")
-        user_db = full_df_ana[full_df_ana['user'] == current_user].copy()
-        attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
-
-        if not attempted.empty:
-            attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
-            attempted['accuracy'] = (attempted['level'] / 5.0) * 100
-            col_p1, col_p2 = st.columns(2)
-            
-            with col_p1:
-                st.markdown("##### 📚 分野別の理解度")
-                field_acc = attempted.groupby('field')['accuracy'].mean().reset_index()
-                chart_field = alt.Chart(field_acc).mark_bar(opacity=0.8).encode(
-                    x=alt.X('field', title='分野'),
-                    y=alt.Y('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                    color=alt.Color('field', legend=None, scale=alt.Scale(scheme='set2')),
-                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-                ).properties(height=300)
-                st.altair_chart(chart_field, use_container_width=True)
-                
-            with col_p2:
-                st.markdown("##### 📖 分野ごとの単元別理解度")
-                attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
-                unique_fields = attempted['field'].unique()
-                for field_name in unique_fields:
-                    st.markdown(f"###### 📘 {field_name}")
-                    field_data = attempted[attempted['field'] == field_name]
-                    unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
-                    chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
-                        x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                        y=alt.Y('unit', title='単元', sort='-x'),
-                        color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
-                        tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-                    ).properties(height=200)
-                    st.altair_chart(chart_unit, use_container_width=True)
-        else:
-            st.info("解答データがありません。")
-
-        st.subheader("⏱️ 分野別の学習時間 (累計)")
-        if not time_df.empty:
-            user_time = time_df[time_df['user'] == current_user].copy()
-            if not user_time.empty:
-                field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
-                field_time = field_time[field_time['study_minutes'] > 0]
-                if not field_time.empty:
-                    chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
-                        theta=alt.Theta(field="study_minutes", type="quantitative"),
-                        color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
-                        tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
-                    ).properties(height=300)
-                    st.altair_chart(chart_time, use_container_width=True)
-
-        st.divider()
-        st.info(f"💡 {current_user}さんの目標設定")
-        try:
-            goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=600)
-            my_goal_row = goal_df[goal_df['user'] == current_user]
-            default_date = datetime.today() + timedelta(days=115)
-            if not my_goal_row.empty:
-                current_goal_str = my_goal_row.iloc[0]['goal_date']
-                default_date = datetime.strptime(current_goal_str, '%Y-%m-%d')
-            new_goal = st.date_input("個人の目標期日を変更する", default_date, key="goal_date_input")
-            if st.button("目標期日を更新する", key="goal_btn"):
-                new_goal_str = new_goal.strftime('%Y-%m-%d')
-                if not my_goal_row.empty:
-                    idx = goal_df[goal_df['user'] == current_user].index[0]
-                    goal_df.loc[idx, 'goal_date'] = new_goal_str
-                else:
-                    new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
-                    goal_df = pd.concat([goal_df, new_row], ignore_index=True)
-                conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
-                st.success(f"目標期日を {new_goal_str} に更新しました！")
-                time.sleep(1)
-                st.rerun()
-        except Exception as e:
-            st.error(f"目標期日の読み込みエラー: {e}")
-
-        st.divider()
-        st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
-        try:
-            holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
-            if 'user' not in holiday_df.columns:
-                holiday_df = pd.DataFrame(columns=['user', 'holiday_date'])
-            my_holidays = sorted(list(set(holiday_df[holiday_df['user'] == current_user]['holiday_date'].dropna().tolist())))
-            col_h1, col_h2 = st.columns(2)
-            with col_h1:
-                st.markdown("##### ➕ 休日の追加")
-                selected_dates = st.date_input("休みにする日（または期間）を選択", value=[], key="holiday_date_input")
-                if st.button("休日を追加する", key="add_holiday_btn"):
-                    new_dates = []
-                    if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-                        start_d, end_d = selected_dates
-                        new_dates = [(start_d + timedelta(days=i)).strftime('%Y-%m-%d') for i in range((end_d - start_d).days + 1)]
-                    elif isinstance(selected_dates, tuple) and len(selected_dates) == 1:
-                        new_dates = [selected_dates[0].strftime('%Y-%m-%d')]
-                    elif selected_dates is not None and not isinstance(selected_dates, tuple):
-                        new_dates = [selected_dates.strftime('%Y-%m-%d')]
-
-                    if new_dates:
-                        updated_holidays = sorted(list(set(my_holidays + new_dates)))
-                        other_users_holidays = holiday_df[holiday_df['user'] != current_user]
-                        new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
-                        conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
-                        st.success(f"{len(new_dates)}日分追加しました！")
-                        time.sleep(1)
-                        st.rerun()
-
-            with col_h2:
-                st.markdown("##### 🗑️ 登録済みの休日")
-                if my_holidays:
-                    to_remove = st.multiselect("削除する日を選択", my_holidays, key="remove_holiday_select")
-                    if st.button("選択した休日を消す", key="remove_holiday_btn"):
-                        if to_remove:
-                            updated_holidays = [d for d in my_holidays if d not in to_remove]
-                            other_users_holidays = holiday_df[holiday_df['user'] != current_user]
-                            new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
-                            conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
-                            st.success("休日を取り消しました！")
-                            time.sleep(1)
-                            st.rerun()
-                else:
-                    st.write("登録されている休日はありません。")
-        except Exception as e:
-            st.error(f"休日設定の読み込みエラー: {e}")
-
-        st.divider()
-        st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
-        cols = st.columns(len(USER_CONFIG.keys()))
-        for idx, user in enumerate(USER_CONFIG.keys()):
-            with cols[idx]:
-                st.markdown(f"**👤 {user}の弱点**")
-                u_df = full_df_ana[full_df_ana['user'] == user].copy()
-                if not u_df.empty:
-                    u_df['単元'] = u_df['q_num'].str.split('No').str[0]
-                    u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-                    u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-                    u_res = u_df.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level_num', lambda x: (x >= 3).sum()), done_q=('is_done', 'sum')).reset_index()
-                    u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
-                    worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
-                    if not worst.empty:
-                        for r in worst.itertuples():
-                            st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
-                    else:
-                        st.success("弱点なし")
-
-    # 4️⃣ 独り言掲示板
-    elif mode_select == mono_label:
-        st.title(f"📝 {mono_label.replace(' 🔴', '')}")
-        try:
-            status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=60)
-            status_df.loc[status_df['user'] == current_user, 'last_read_at'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
-            conn.update(spreadsheet=target_url, worksheet="ReadStatus", data=status_df)
-        except: pass
-
-        with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
-            note_content = st.text_area("内容（Markdown対応）")
-            uploaded_file = st.file_uploader("資料をアップロード", type=['pdf', 'png', 'jpg', 'jpeg'])
-            
-            if st.button("投稿する"):
-                if note_content:
-                    f_name = ""
-                    if uploaded_file:
-                        f_name = uploaded_file.name
-                        os.makedirs("uploads", exist_ok=True)
-                        file_path = os.path.join("uploads", f_name)
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
-                    
-                    new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], columns=["date", "user", "content", "file_name"])
-                    try:
-                        old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
-                        updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
-                        conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
-                        
-                        line_msg = f"💬 【新着：独り言】\n{current_user}さんが新しいメッセージを投稿しました。\n\n内容：\n{note_content[:50]}{'...' if len(note_content) > 50 else ''}"
-                        send_line_notification(line_msg)
-                        
-                        st.success("投稿しました。メンバーに通知を送信しました。")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"送信に失敗しました: {e}")
-
-        st.divider()
-        try:
-            display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
-            if not display_mono.empty:
-                display_mono.columns = display_mono.columns.str.strip()
-                display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
-                display_mono = display_mono.sort_values("date_sort", ascending=False)
-
-                for m in display_mono.itertuples():
-                    is_me = (str(m.user).strip() == current_user)
-                    with st.chat_message("user" if is_me else "assistant"):
-                        d_show = m.date if pd.isna(m.date_sort) else m.date_sort.strftime('%m/%d %H:%M')
-                        st.write(f"**{m.user}** ({d_show})")
-                        st.markdown(m.content)
-                        
-                        if hasattr(m, 'file_name') and str(m.file_name) != "nan" and m.file_name:
-                            file_path = os.path.join("uploads", m.file_name)
-                            if os.path.exists(file_path):
-                                if m.file_name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                                    st.image(file_path, caption=m.file_name, use_container_width=True)
-                                else:
-                                    with open(file_path, "rb") as f:
-                                        st.download_button(label=f"📥 {m.file_name} をダウンロード", data=f, file_name=m.file_name, mime="application/pdf")
-                            else:
-                                st.caption(f"📎 添付資料: {m.file_name} (※ファイル本体が見つかりません)")
-            else:
-                st.info("まだ投稿がありません。最初の独り言をどうぞ。")
-        except Exception as e:
-            st.error(f"表示エラー: {e}") 
-
-# ==========================================
-# --- 7. 共通の問題表示・解答エリア ---
-# ==========================================
-# 🌟 テスト中はここが優先表示される！
-if st.session_state.get("test_pool"):
+    full_df_ana = load_full_data()
     
-    if "pending_study_time" not in st.session_state: st.session_state.pending_study_time = 0
-    if "unsaved_count" not in st.session_state: st.session_state.unsaved_count = 0
-    if "unsaved_answers" not in st.session_state: st.session_state.unsaved_answers = False
-    if "last_action_time" not in st.session_state: st.session_state.last_action_time = time.time()
-        
+    try:
+        time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=600)
+        time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
+        time_df['study_minutes'] = time_df['study_seconds'] / 60.0
+        if 'field' not in time_df.columns:
+            time_df['field'] = '未分類'
+        time_df['field'] = time_df['field'].fillna('未分類')
+        time_df.loc[time_df['field'] == '', 'field'] = '未分類'
+    except:
+        time_df = pd.DataFrame(columns=['user', 'date', 'study_seconds', 'study_minutes', 'field'])
+
+    yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+    user_yesterday = full_df_ana[(full_df_ana['user'] == current_user) & (full_df_ana['last_date'] == yesterday_str)]
+    done_yesterday = len(user_yesterday)
+
+    if done_yesterday == 0:
+        st.error(f"🚨 警告：昨日の進捗は 0 問です。言い訳せずに今日は遅れを取り戻しましょう。")
+    else:
+        st.success(f"✅ 昨日は {done_yesterday} 問の努力が確認されました。")
+
     st.divider()
-    
-    col_nav1, col_nav2 = st.columns([2, 2])
-    with col_nav1:
-        q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
-        selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
-        if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
-            st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
-            st.rerun()
-            
-    with col_nav2:
-        if st.session_state.unsaved_answers:
-            st.markdown(f"<div style='text-align: right; color: red; font-size: 0.8em; font-weight: bold;'>⚠️ 未保存データ({st.session_state.unsaved_count}問) / 5問で自動保存</div>", unsafe_allow_html=True)
+
+    st.subheader("🏁 メンバー進捗比較")
+    comparison = []
+    for user in USER_CONFIG.keys():
+        u_df = full_df_ana[full_df_ana['user'] == user].copy()
+        total = len(u_df)
+        if total > 0:
+            valid_done = u_df[u_df['last_date'].astype(str).str.contains("-", na=False)]
+            done = len(valid_done)
+            rate = round((done / total) * 100, 1)
         else:
-            st.markdown("<div style='text-align: right; color: green; font-size: 0.8em;'>✅ 全てのデータが保存されています</div>", unsafe_allow_html=True)
+            rate = 0.0
+        comparison.append({"ユーザー": user, "進捗率": f"{rate}%"})
+    st.table(pd.DataFrame(comparison))
+
+    st.divider()
+    st.subheader("⏱️ メンバー学習時間比較")
+    if not time_df.empty:
+        today_str = datetime.today().strftime('%Y-%m-%d')
+        this_month_prefix = datetime.today().strftime('%Y-%m')
         
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            if st.button("💾 クラウドに保存", disabled=not st.session_state.unsaved_answers, use_container_width=True):
-                with st.spinner('データを同期中...'):
-                    curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                    if st.session_state.pending_study_time > 0:
-                        update_study_time(current_user, st.session_state.pending_study_time, curr_field)
-                    if st.session_state.unsaved_answers:
-                        full = load_full_data()
-                        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
-                    
-                    st.session_state.pending_study_time = 0
-                    st.session_state.unsaved_count = 0
-                    st.session_state.unsaved_answers = False
-                    st.success("✅ 手動セーブ完了！")
+        today_data = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum().reset_index()
+        month_data = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum().reset_index()
+        total_data = time_df.groupby('user')['study_minutes'].sum().reset_index()
+        
+        col_g1, col_g2, col_g3 = st.columns(3)
+        def create_altair_chart(data, title):
+            return alt.Chart(data).mark_bar().encode(
+                x=alt.X('user', title='ユーザー'),
+                y=alt.Y('study_minutes', title='学習時間 (分)'),
+                color=alt.Color('user', title='ユーザー', scale=alt.Scale(scheme='tableau10')), 
+                tooltip=[alt.Tooltip('user', title='ユーザー'), alt.Tooltip('study_minutes', title='時間 (分)', format='.1f')]
+            ).properties(title=title)
+
+        with col_g1:
+            st.markdown("##### 📅 今日の学習 (分)")
+            if not today_data.empty and today_data['study_minutes'].sum() > 0:
+                st.altair_chart(create_altair_chart(today_data, '今日の学習'), use_container_width=True)
+            else: st.info("今日の記録はまだありません")
+                
+        with col_g2:
+            st.markdown("##### 🗓️ 今月の学習 (分)")
+            if not month_data.empty and month_data['study_minutes'].sum() > 0:
+                st.altair_chart(create_altair_chart(month_data, '今月の学習'), use_container_width=True)
+            else: st.info("今月の記録はまだありません")
+                
+        with col_g3:
+            st.markdown("##### 🏆 累計学習 (分)")
+            if not total_data.empty and total_data['study_minutes'].sum() > 0:
+                st.altair_chart(create_altair_chart(total_data, '累計学習'), use_container_width=True)
+            else: st.info("累計記録はまだありません")
+    else:
+        st.info("学習時間の記録がまだありません。")
+
+    st.divider()
+    st.header(f"👤 {current_user} 専用ダッシュボード")
+    st.caption("※このデータはあなたしか見ることができません。")
+
+    st.subheader("🎯 分野・単元別の正解率（理解度）")
+    user_db = full_df_ana[full_df_ana['user'] == current_user].copy()
+    attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
+
+    if not attempted.empty:
+        attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
+        attempted['accuracy'] = (attempted['level'] / 5.0) * 100
+        col_p1, col_p2 = st.columns(2)
+        
+        with col_p1:
+            st.markdown("##### 📚 分野別の理解度")
+            field_acc = attempted.groupby('field')['accuracy'].mean().reset_index()
+            chart_field = alt.Chart(field_acc).mark_bar(opacity=0.8).encode(
+                x=alt.X('field', title='分野'),
+                y=alt.Y('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                color=alt.Color('field', legend=None, scale=alt.Scale(scheme='set2')),
+                tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+            ).properties(height=300)
+            st.altair_chart(chart_field, use_container_width=True)
+            
+        with col_p2:
+            st.markdown("##### 📖 分野ごとの単元別理解度")
+            attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
+            unique_fields = attempted['field'].unique()
+            for field_name in unique_fields:
+                st.markdown(f"###### 📘 {field_name}")
+                field_data = attempted[attempted['field'] == field_name]
+                unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
+                chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
+                    x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y('unit', title='単元', sort='-x'),
+                    color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
+                    tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+                ).properties(height=200)
+                st.altair_chart(chart_unit, use_container_width=True)
+    else:
+        st.info("解答データがありません。")
+
+    st.subheader("⏱️ 分野別の学習時間 (累計)")
+    if not time_df.empty:
+        user_time = time_df[time_df['user'] == current_user].copy()
+        if not user_time.empty:
+            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
+            field_time = field_time[field_time['study_minutes'] > 0]
+            if not field_time.empty:
+                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta(field="study_minutes", type="quantitative"),
+                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
+                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+                ).properties(height=300)
+                st.altair_chart(chart_time, use_container_width=True)
+
+    st.divider()
+    st.info(f"💡 {current_user}さんの目標設定")
+    try:
+        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=600)
+        my_goal_row = goal_df[goal_df['user'] == current_user]
+        default_date = datetime.today() + timedelta(days=115)
+        if not my_goal_row.empty:
+            current_goal_str = my_goal_row.iloc[0]['goal_date']
+            default_date = datetime.strptime(current_goal_str, '%Y-%m-%d')
+        new_goal = st.date_input("個人の目標期日を変更する", default_date, key="goal_date_input")
+        if st.button("目標期日を更新する", key="goal_btn"):
+            new_goal_str = new_goal.strftime('%Y-%m-%d')
+            if not my_goal_row.empty:
+                idx = goal_df[goal_df['user'] == current_user].index[0]
+                goal_df.loc[idx, 'goal_date'] = new_goal_str
+            else:
+                new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
+                goal_df = pd.concat([goal_df, new_row], ignore_index=True)
+            conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
+            st.success(f"目標期日を {new_goal_str} に更新しました！")
+            time.sleep(1)
+            st.rerun()
+    except Exception as e:
+        st.error(f"目標期日の読み込みエラー: {e}")
+
+    st.divider()
+    st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
+    try:
+        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
+        if 'user' not in holiday_df.columns:
+            holiday_df = pd.DataFrame(columns=['user', 'holiday_date'])
+        my_holidays = sorted(list(set(holiday_df[holiday_df['user'] == current_user]['holiday_date'].dropna().tolist())))
+        col_h1, col_h2 = st.columns(2)
+        with col_h1:
+            st.markdown("##### ➕ 休日の追加")
+            selected_dates = st.date_input("休みにする日（または期間）を選択", value=[], key="holiday_date_input")
+            if st.button("休日を追加する", key="add_holiday_btn"):
+                new_dates = []
+                if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+                    start_d, end_d = selected_dates
+                    new_dates = [(start_d + timedelta(days=i)).strftime('%Y-%m-%d') for i in range((end_d - start_d).days + 1)]
+                elif isinstance(selected_dates, tuple) and len(selected_dates) == 1:
+                    new_dates = [selected_dates[0].strftime('%Y-%m-%d')]
+                elif selected_dates is not None and not isinstance(selected_dates, tuple):
+                    new_dates = [selected_dates.strftime('%Y-%m-%d')]
+
+                if new_dates:
+                    updated_holidays = sorted(list(set(my_holidays + new_dates)))
+                    other_users_holidays = holiday_df[holiday_df['user'] != current_user]
+                    new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
+                    conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
+                    st.success(f"{len(new_dates)}日分追加しました！")
                     time.sleep(1)
                     st.rerun()
 
-        with col_btn2:
-            if st.button("⏹️ 終了して退出", type="primary", use_container_width=True):
-                with st.spinner('最終データを保存中...'):
-                    curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                    if st.session_state.pending_study_time > 0:
-                        update_study_time(current_user, st.session_state.pending_study_time, curr_field)
-                    if st.session_state.unsaved_answers:
-                        full = load_full_data()
-                        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
-                        
-                st.session_state.test_pool = []
-                st.session_state.pending_study_time = 0
-                st.session_state.unsaved_count = 0
-                st.session_state.unsaved_answers = False
-                if "last_action_time" in st.session_state:
-                    del st.session_state["last_action_time"]
-                st.success("✅ お疲れ様でした！記録は完全に保存されました。")
-                time.sleep(1)
-                st.rerun()
+        with col_h2:
+            st.markdown("##### 🗑️ 登録済みの休日")
+            if my_holidays:
+                to_remove = st.multiselect("削除する日を選択", my_holidays, key="remove_holiday_select")
+                if st.button("選択した休日を消す", key="remove_holiday_btn"):
+                    if to_remove:
+                        updated_holidays = [d for d in my_holidays if d not in to_remove]
+                        other_users_holidays = holiday_df[holiday_df['user'] != current_user]
+                        new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
+                        conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
+                        st.success("休日を取り消しました！")
+                        time.sleep(1)
+                        st.rerun()
+            else:
+                st.write("登録されている休日はありません。")
+    except Exception as e:
+        st.error(f"休日設定の読み込みエラー: {e}")
 
-    curr = st.session_state.test_pool[0]
-    st.subheader(f"【{curr['field']}】 {curr['q_num']}")
-    
-    cols = st.columns(6)
-    for i in range(6):
-        if cols[i].button(f"{i}点", key=f"b{i}"):
-            elapsed = time.time() - st.session_state.last_action_time
-            st.session_state.pending_study_time += elapsed
-            st.session_state.last_action_time = time.time() 
-            st.session_state.unsaved_count += 1 
-            
-            st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
-            idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
-            
-            today_str = datetime.today().strftime('%Y-%m-%d')
-            st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
-            st.session_state.unsaved_answers = True 
-            
-            done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
-            if done_today == 20:
-                try:
-                    logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
-                    if logs[(logs['date'] == today_str) & (logs['user'] == current_user) & (logs['type'] == 'completed')].empty:
-                        msg = f"✅ 【速報】\n{current_user}が本日の目標を突破しました！\n\n彼は自由の身です。まだ終わっていない他のメンバーは、猛烈に自分を恥じなさい。"
-                        if send_line_notification(msg):
-                            new_log = pd.DataFrame([[today_str, current_user, "completed"]], columns=["date", "user", "type"])
-                            conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
-                            st.toast("🎉 ノルマ達成をLINEで通知しました！")
-                except: pass
+    st.divider()
+    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
+    cols = st.columns(len(USER_CONFIG.keys()))
+    for idx, user in enumerate(USER_CONFIG.keys()):
+        with cols[idx]:
+            st.markdown(f"**👤 {user}の弱点**")
+            u_df = full_df_ana[full_df_ana['user'] == user].copy()
+            if not u_df.empty:
+                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
+                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
+                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
+                u_res = u_df.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level_num', lambda x: (x >= 3).sum()), done_q=('is_done', 'sum')).reset_index()
+                u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
+                worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
+                if not worst.empty:
+                    for r in worst.itertuples():
+                        st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
+                else:
+                    st.success("弱点なし")
 
-            if st.session_state.unsaved_count >= 5:
+# 2️⃣ 独り言掲示板
+elif mode_select == mono_label:
+    st.title(f"📝 {mono_label.replace(' 🔴', '')}")
+    try:
+        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=60)
+        status_df.loc[status_df['user'] == current_user, 'last_read_at'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
+        conn.update(spreadsheet=target_url, worksheet="ReadStatus", data=status_df)
+    except: pass
+
+    with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
+        note_content = st.text_area("内容（Markdown対応）")
+        uploaded_file = st.file_uploader("資料をアップロード", type=['pdf', 'png', 'jpg', 'jpeg'])
+        
+        if st.button("投稿する"):
+            if note_content:
+                f_name = ""
+                if uploaded_file:
+                    f_name = uploaded_file.name
+                    os.makedirs("uploads", exist_ok=True)
+                    file_path = os.path.join("uploads", f_name)
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                
+                new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], columns=["date", "user", "content", "file_name"])
                 try:
-                    update_study_time(current_user, st.session_state.pending_study_time, curr['field'])
-                    full = load_full_data()
-                    conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
+                    updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
+                    conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
                     
+                    line_msg = f"💬 【新着：独り言】\n{current_user}さんが新しいメッセージを投稿しました。\n\n内容：\n{note_content[:50]}{'...' if len(note_content) > 50 else ''}"
+                    send_line_notification(line_msg)
+                    
+                    st.success("投稿しました。メンバーに通知を送信しました。")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"送信に失敗しました: {e}")
+
+    st.divider()
+    try:
+        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
+        if not display_mono.empty:
+            display_mono.columns = display_mono.columns.str.strip()
+            display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
+            display_mono = display_mono.sort_values("date_sort", ascending=False)
+
+            for m in display_mono.itertuples():
+                is_me = (str(m.user).strip() == current_user)
+                with st.chat_message("user" if is_me else "assistant"):
+                    d_show = m.date if pd.isna(m.date_sort) else m.date_sort.strftime('%m/%d %H:%M')
+                    st.write(f"**{m.user}** ({d_show})")
+                    st.markdown(m.content)
+                    
+                    if hasattr(m, 'file_name') and str(m.file_name) != "nan" and m.file_name:
+                        file_path = os.path.join("uploads", m.file_name)
+                        if os.path.exists(file_path):
+                            if m.file_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                                st.image(file_path, caption=m.file_name, use_container_width=True)
+                            else:
+                                with open(file_path, "rb") as f:
+                                    st.download_button(label=f"📥 {m.file_name} をダウンロード", data=f, file_name=m.file_name, mime="application/pdf")
+                        else:
+                            st.caption(f"📎 添付資料: {m.file_name} (※ファイル本体が見つかりません)")
+        else:
+            st.info("まだ投稿がありません。最初の独り言をどうぞ。")
+    except Exception as e:
+        st.error(f"表示エラー: {e}") 
+
+# 3️⃣ 学習モード ＆ 復習モードの分岐
+elif mode_select in ["学習モード", "復習モード"]:
+    
+    # 🌟 A. 進行中のテストがあれば、優先して解答エリアを表示！
+    if st.session_state.get("test_pool"):
+        
+        if "pending_study_time" not in st.session_state: st.session_state.pending_study_time = 0
+        if "unsaved_count" not in st.session_state: st.session_state.unsaved_count = 0
+        if "unsaved_answers" not in st.session_state: st.session_state.unsaved_answers = False
+        if "last_action_time" not in st.session_state: st.session_state.last_action_time = time.time()
+            
+        st.divider()
+        
+        col_nav1, col_nav2 = st.columns([2, 2])
+        with col_nav1:
+            q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
+            selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
+            if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
+                st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
+                st.rerun()
+                
+        with col_nav2:
+            if st.session_state.unsaved_answers:
+                st.markdown(f"<div style='text-align: right; color: red; font-size: 0.8em; font-weight: bold;'>⚠️ 未保存データ({st.session_state.unsaved_count}問) / 5問で自動保存</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='text-align: right; color: green; font-size: 0.8em;'>✅ 全てのデータが保存されています</div>", unsafe_allow_html=True)
+            
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("💾 クラウドに保存", disabled=not st.session_state.unsaved_answers, use_container_width=True):
+                    with st.spinner('データを同期中...'):
+                        curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                        if st.session_state.pending_study_time > 0:
+                            update_study_time(current_user, st.session_state.pending_study_time, curr_field)
+                        if st.session_state.unsaved_answers:
+                            full = load_full_data()
+                            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+                        
+                        st.session_state.pending_study_time = 0
+                        st.session_state.unsaved_count = 0
+                        st.session_state.unsaved_answers = False
+                        st.success("✅ 手動セーブ完了！")
+                        time.sleep(1)
+                        st.rerun()
+
+            with col_btn2:
+                if st.button("⏹️ 終了して退出", type="primary", use_container_width=True):
+                    with st.spinner('最終データを保存中...'):
+                        curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                        if st.session_state.pending_study_time > 0:
+                            update_study_time(current_user, st.session_state.pending_study_time, curr_field)
+                        if st.session_state.unsaved_answers:
+                            full = load_full_data()
+                            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+                            
+                    st.session_state.test_pool = []
                     st.session_state.pending_study_time = 0
                     st.session_state.unsaved_count = 0
                     st.session_state.unsaved_answers = False
-                    st.toast("💾 5問分のデータを自動セーブしました！")
-                except Exception as e:
-                    st.toast("⚠️ 自動セーブに失敗しましたが、学習は継続できます。")
+                    if "last_action_time" in st.session_state:
+                        del st.session_state["last_action_time"]
+                    st.success("✅ お疲れ様でした！記録は完全に保存されました。")
+                    time.sleep(1)
+                    st.rerun()
 
-            st.session_state.test_pool.pop(0)
+        curr = st.session_state.test_pool[0]
+        st.subheader(f"【{curr['field']}】 {curr['q_num']}")
+        
+        cols = st.columns(6)
+        for i in range(6):
+            if cols[i].button(f"{i}点", key=f"b{i}"):
+                elapsed = time.time() - st.session_state.last_action_time
+                st.session_state.pending_study_time += elapsed
+                st.session_state.last_action_time = time.time() 
+                st.session_state.unsaved_count += 1 
+                
+                st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
+                idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
+                
+                today_str = datetime.today().strftime('%Y-%m-%d')
+                st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
+                st.session_state.unsaved_answers = True 
+                
+                done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
+                if done_today == 20:
+                    try:
+                        logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
+                        if logs[(logs['date'] == today_str) & (logs['user'] == current_user) & (logs['type'] == 'completed')].empty:
+                            msg = f"✅ 【速報】\n{current_user}が本日の目標を突破しました！\n\n彼は自由の身です。まだ終わっていない他のメンバーは、猛烈に自分を恥じなさい。"
+                            if send_line_notification(msg):
+                                new_log = pd.DataFrame([[today_str, current_user, "completed"]], columns=["date", "user", "type"])
+                                conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
+                                st.toast("🎉 ノルマ達成をLINEで通知しました！")
+                    except: pass
+
+                if st.session_state.unsaved_count >= 5:
+                    try:
+                        update_study_time(current_user, st.session_state.pending_study_time, curr['field'])
+                        full = load_full_data()
+                        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+                        
+                        st.session_state.pending_study_time = 0
+                        st.session_state.unsaved_count = 0
+                        st.session_state.unsaved_answers = False
+                        st.toast("💾 5問分のデータを自動セーブしました！")
+                    except Exception as e:
+                        st.toast("⚠️ 自動セーブに失敗しましたが、学習は継続できます。")
+
+                st.session_state.test_pool.pop(0)
+                st.rerun()
+
+        c1, c2 = st.columns(2)
+        if c1.button("↩️ 1つ戻る", disabled=not st.session_state.history, use_container_width=True):
+            last = st.session_state.history.pop()
+            idx = st.session_state.db[(st.session_state.db['q_num'] == last['q_num']) & (st.session_state.db['field'] == last['field'])].index
+            st.session_state.db.loc[idx, ['level', 'last_date']] = [last['old_level'], last['old_date']]
+            st.session_state.test_pool.insert(0, st.session_state.db.loc[idx].to_dict('records')[0])
+            st.session_state.unsaved_answers = True 
+            st.session_state.unsaved_count = max(0, st.session_state.unsaved_count - 1)
+            st.rerun()
+            
+        if c2.button("⏭️ 後回しにする", use_container_width=True):
+            st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
             st.rerun()
 
-    c1, c2 = st.columns(2)
-    if c1.button("↩️ 1つ戻る", disabled=not st.session_state.history, use_container_width=True):
-        last = st.session_state.history.pop()
-        idx = st.session_state.db[(st.session_state.db['q_num'] == last['q_num']) & (st.session_state.db['field'] == last['field'])].index
-        st.session_state.db.loc[idx, ['level', 'last_date']] = [last['old_level'], last['old_date']]
-        st.session_state.test_pool.insert(0, st.session_state.db.loc[idx].to_dict('records')[0])
-        st.session_state.unsaved_answers = True 
-        st.session_state.unsaved_count = max(0, st.session_state.unsaved_count - 1)
-        st.rerun()
-        
-    if c2.button("⏭️ 後回しにする", use_container_width=True):
-        st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
-        st.rerun()
+    # 🌟 B. 進行中のテストがない場合は、それぞれの「準備画面」を表示
+    else:
+        if "dash_full_df" not in st.session_state:
+            st.session_state.dash_full_df = load_full_data()
+
+        # 学習モードの準備画面
+        if mode_select == "学習モード":
+            st.title(f"⚡ 学習：{current_user}")
+            unstarted_df = st.session_state.db[st.session_state.db['last_date'].isin(["", "nan", "None", "NaN", "<NA>"])].copy()
+
+            if unstarted_df.empty:
+                st.success("🎉 おめでとうございます！すべての問題を一度は解きました。復習モードへ進みましょう！")
+            else:
+                field_list = sorted(unstarted_df['field'].unique().tolist())
+                field_options = ["すべて"] + field_list
+                selected_field = st.selectbox("学習する分野（科目）を選んでください", field_options, key="learn_field_select")
+
+                final_pool_df = unstarted_df if selected_field == "すべて" else unstarted_df[unstarted_df['field'] == selected_field]
+
+                st.info(f"対象： **{selected_field}** （未着手問題：{len(final_pool_df)}問）")
+                if st.button("🚀 この内容で学習を開始する", use_container_width=True):
+                    st.session_state.test_pool = final_pool_df.to_dict('records')
+                    st.session_state.history = []
+                    st.rerun()
+
+        # 復習モードの準備画面
+        elif mode_select == "復習モード":
+            st.title(f"🔄 復習：{current_user}")
+            review_df = st.session_state.db[(~st.session_state.db['last_date'].isin(["", "nan", "NaN", "None", "<NA>"])) & (st.session_state.db['level'] < 5)].copy()
+            review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
+            
+            st.info(f"現在の復習対象: {len(review_df)} 問")
+            if st.button("🔥 復習開始", use_container_width=True):
+                st.session_state.test_pool = review_df.to_dict('records')
+                st.session_state.history = []
+                st.rerun()
