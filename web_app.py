@@ -912,39 +912,45 @@ if mode_select == "分析ダッシュボード":
         st.error(f"休日設定の読み込みエラー: {e}")
 
     st.divider()
-    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
+    st.subheader("🚩 メンバー別 苦手単元ランキング（正答率順）")
     cols = st.columns(len(USER_CONFIG.keys()))
     for idx, user in enumerate(USER_CONFIG.keys()):
         with cols[idx]:
             st.markdown(f"**👤 {user}の弱点**")
             u_df = full_df_ana[full_df_ana['user'] == user].copy()
             if not u_df.empty:
-                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
+                # 単元名を抽出
+                u_df['単元'] = u_df['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
                 u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
                 u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
                 
-                # 集計
+                # 集計：単元ごとに「実際に解いた数」と「レベル3以上の数」を計算
                 u_res = u_df.groupby(['field', '単元']).agg(
-                    total=('q_num', 'count'), 
                     correct=('level_num', lambda x: (x >= 3).sum()), 
                     done_q=('is_done', 'sum')
                 ).reset_index()
                 
-                # 🌟 修正ポイント1：計算前に「1問でも解いたことがある単元」だけに絞る（0割りエラー防止）
+                # 🌟 1問でも着手した問題がある単元だけに絞る
                 u_res = u_res[u_res['done_q'] > 0].copy()
                 
                 if not u_res.empty:
-                    # 🌟 修正ポイント2：分母を「全問題数(total)」ではなく「解いた数(done_q)」にする！
+                    # 🌟 定義通り「着手した問題の正答率」を計算
                     u_res['正答率'] = (u_res['correct'] / u_res['done_q'] * 100).round(1)
                     
-                    # 正答率が低い順にワースト7を抽出
-                    worst = u_res.sort_values('正答率').head(7)
+                    # 🌟 正答率の低い順（0%〜）にすべての単元を表示
+                    worst_ranking = u_res.sort_values('正答率', ascending=True)
                     
-                    for r in worst.itertuples():
-                        # r.done_q を表示に入れると「何問中何問正解か」が裏付けとして分かって便利です
-                        st.error(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
+                    for r in worst_ranking.itertuples():
+                        # 正答率が低いものは赤(error)、高いものは緑(success)などで色分けすると見やすいですが、
+                        # ここでは一貫して弱点リストとして表示します
+                        if r.正答率 < 50:
+                            st.error(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
+                        elif r.正答率 < 80:
+                            st.warning(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
+                        else:
+                            st.success(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
                 else:
-                    st.success("弱点なし（未着手）")
+                    st.info("着手済みの問題がありません")
             else:
                 st.write("データなし")
 
