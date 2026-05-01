@@ -695,7 +695,7 @@ if mode_select == "分析ダッシュボード":
             oldest_monday = min_date - timedelta(days=min_date.weekday())
             current_monday = datetime.today().date() - timedelta(days=datetime.today().date().weekday())
             
-            # 選択肢のリストを作成（デフォルトが「今週」になるように最新を一番上にする）
+            # 選択肢のリストを作成
             week_choices = []
             temp_monday = current_monday
             while temp_monday >= oldest_monday:
@@ -710,18 +710,82 @@ if mode_select == "分析ダッシュボード":
             start_of_week = next(w["monday"] for w in week_choices if w["label"] == selected_label)
             
             week_dates = [(start_of_week + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7)]
-            week_data = daily_df[daily_df['date'].isin(week_dates)]
             
-            if not week_data.empty:
-                chart_w = alt.Chart(week_data).mark_line(point=True, size=3).encode(
-                    x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d', tickCount=7)),
+            # 🌟 修正ポイント1：勉強していない日もグラフを「0分」に落とすための空データを作成
+            empty_w_records = [{'date': d, 'user': u, 'study_minutes': 0.0} for d in week_dates for u in user_list]
+            empty_w_df = pd.DataFrame(empty_w_records)
+            
+            # 実際のデータと合体させる
+            week_data = daily_df[daily_df['date'].isin(week_dates)]
+            merged_w_df = pd.concat([empty_w_df, week_data]).groupby(['date', 'user'], as_index=False)['study_minutes'].sum()
+            
+            # 表示用に短い日付（MM/DD）の列を作る
+            merged_w_df['display_date'] = pd.to_datetime(merged_w_df['date']).dt.strftime('%m/%d')
+            
+            if merged_w_df['study_minutes'].sum() > 0:
+                chart_w = alt.Chart(merged_w_df).mark_line(point=True, size=3).encode(
+                    # 🌟 修正ポイント2：X軸を「順序データ (O)」に指定し、必ず7日分均等に並べる
+                    x=alt.X('display_date:O', title='日付', sort=None, axis=alt.Axis(labelAngle=0)),
                     y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
                     color=alt.Color('user:N', title='ユーザー', scale=color_scale),
-                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('date:T', title='日付', format='%Y/%m/%d'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
+                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('display_date:O', title='日付'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
                 ).properties(height=350)
                 st.altair_chart(chart_w, use_container_width=True)
             else: 
                 st.info("この週の学習記録はありません。")
+                
+        # --- 🗓️ タブ2：月間推移（折れ線グラフ） ---
+        with tab_m:
+            st.markdown("##### 🗓️ 月間推移")
+            col_y, col_m = st.columns(2)
+            today_date = datetime.today()
+            
+            with col_y:
+                sel_year = st.selectbox("年を選択", [today_date.year, today_date.year-1, today_date.year-2], index=0, key="month_year")
+            with col_m:
+                sel_month = st.selectbox("月を選択", list(range(1, 13)), index=today_date.month-1, key="month_month")
+                
+            import calendar
+            _, num_days = calendar.monthrange(sel_year, sel_month)
+            month_dates = [f"{sel_year}-{sel_month:02d}-{d:02d}" for d in range(1, num_days + 1)]
+            
+            # 🌟 月間も同様に、全日分の「0分」の空データを作成して合体
+            empty_m_records = [{'date': d, 'user': u, 'study_minutes': 0.0} for d in month_dates for u in user_list]
+            empty_m_df = pd.DataFrame(empty_m_records)
+            
+            month_prefix = f"{sel_year}-{sel_month:02d}"
+            month_data = daily_df[daily_df['date'].str.startswith(month_prefix, na=False)]
+            
+            merged_m_df = pd.concat([empty_m_df, month_data]).groupby(['date', 'user'], as_index=False)['study_minutes'].sum()
+            merged_m_df['display_date'] = pd.to_datetime(merged_m_df['date']).dt.strftime('%m/%d')
+            
+            if merged_m_df['study_minutes'].sum() > 0:
+                chart_m = alt.Chart(merged_m_df).mark_line(point=True, size=3).encode(
+                    # 🌟 月間は日付が多いので、時間データ (T) として扱い適度に目盛りを間引く
+                    x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d', tickCount=10)),
+                    y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
+                    color=alt.Color('user:N', title='ユーザー', scale=color_scale),
+                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('display_date:O', title='日付'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
+                ).properties(height=350)
+                st.altair_chart(chart_m, use_container_width=True)
+            else: 
+                st.info("この月の学習記録はありません。")
+
+        # --- 🏆 タブ3：累計学習（棒グラフ） ---
+        with tab_t:
+            st.markdown("##### 🏆 累計学習時間")
+            if not total_data.empty:
+                chart_t = alt.Chart(total_data).mark_bar().encode(
+                    x=alt.X('user:N', title='ユーザー', axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y('study_minutes:Q', title='累計学習時間 (分)'),
+                    color=alt.Color('user:N', title='ユーザー', scale=color_scale),
+                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
+                ).properties(height=350)
+                st.altair_chart(chart_t, use_container_width=True)
+            else: 
+                st.info("記録なし")
+    else:
+        st.info("学習時間の記録がまだありません。")
             
         # --- 🗓️ タブ2：月間推移（折れ線グラフ） ---
         with tab_m:
