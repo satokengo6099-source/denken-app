@@ -603,7 +603,8 @@ st.sidebar.metric(
 )
 
 st.sidebar.progress(answered_count / total_count if total_count > 0 else 0)
-st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({answered_count/total_count*100:.1f}%)")
+progress_percentage = (answered_count / total_count * 100) if total_count > 0 else 0.0
+st.sidebar.caption(f"全体進捗: {answered_count}/{total_count} ({progress_percentage:.1f}%)")
 
 # 🌟 本日のノルマが「固定の20問」から「カレンダーに基づく自動計算」に進化！
 st.sidebar.write(f"📊 本日のノルマ: **{done_today_count} / {daily_pace}** 問")
@@ -624,7 +625,7 @@ st.sidebar.markdown("""
 # --- 6. メインコンテンツの分岐 ---
 # ==========================================
 
-# 🌟 鎖の始まり：問題を解いていない時だけメニューを表示する
+# 🌟 鎖の始まり：進行中のテストがない時だけメニューを表示する
 if not st.session_state.get("test_pool"):
     
     # 1️⃣ 学習モード
@@ -965,7 +966,7 @@ if not st.session_state.get("test_pool"):
 # ==========================================
 # --- 7. 共通の問題表示・解答エリア ---
 # ==========================================
-# 🌟 メニューの if〜elif の外側（独立）！
+# 🌟 テスト中はここが優先表示される！
 if st.session_state.get("test_pool"):
     
     if "pending_study_time" not in st.session_state: st.session_state.pending_study_time = 0
