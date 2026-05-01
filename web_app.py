@@ -1008,11 +1008,9 @@ elif mode_select == mono_label:
 if mode_select in ["学習モード", "復習モード"]:
     if st.session_state.get("test_pool"):
         
-        # 🌟 初期化：一時保存用と「自動セーブカウンター」を準備
+        # 🌟 初期化：一時保存用フラグ
         if "pending_study_time" not in st.session_state:
             st.session_state.pending_study_time = 0
-        if "unsaved_count" not in st.session_state:
-            st.session_state.unsaved_count = 0 # 👈 自動セーブ用のカウンター
         if "unsaved_answers" not in st.session_state:
             st.session_state.unsaved_answers = False
 
@@ -1022,7 +1020,8 @@ if mode_select in ["学習モード", "復習モード"]:
             
         st.divider()
         
-        col_nav1, col_nav2 = st.columns([3, 1])
+        # 🚀 ナビゲーションと「手動セーブ・終了」ボタンエリア
+        col_nav1, col_nav2 = st.columns([2, 2])
         with col_nav1:
             q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
             selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
@@ -1031,32 +1030,50 @@ if mode_select in ["学習モード", "復習モード"]:
                 st.rerun()
                 
         with col_nav2:
-            st.markdown("<div style='text-align: right; color: #888; font-size: 0.8em;'>※5問ごとに自動保存されます</div>", unsafe_allow_html=True)
-            # ⏹️ 学習終了ボタン（残りの未保存データを最終セーブ）
-            if st.button("⏹️ 終了して保存", type="primary"):
-                with st.spinner('最終データをクラウドに保存中...'):
-                    curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                    
-                    # 1. メモリに貯めた学習時間を保存
-                    if st.session_state.pending_study_time > 0:
-                        update_study_time(current_user, st.session_state.pending_study_time, curr_field)
-                    
-                    # 2. メモリ上の解答データを保存
-                    if st.session_state.unsaved_answers:
-                        full = load_full_data()
-                        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+            # 🌟 未保存データがある時だけ赤文字で警告
+            if st.session_state.unsaved_answers:
+                st.markdown("<div style='text-align: right; color: red; font-size: 0.8em; font-weight: bold;'>⚠️ 未保存のデータがあります！</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='text-align: right; color: green; font-size: 0.8em;'>✅ 全てのデータが保存されています</div>", unsafe_allow_html=True)
+            
+            col_btn1, col_btn2 = st.columns(2)
+            
+            with col_btn1:
+                # 💾 手動セーブ（更新）ボタン
+                if st.button("💾 クラウドに保存", disabled=not st.session_state.unsaved_answers, use_container_width=True):
+                    with st.spinner('データを同期中...'):
+                        curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                        if st.session_state.pending_study_time > 0:
+                            update_study_time(current_user, st.session_state.pending_study_time, curr_field)
+                        if st.session_state.unsaved_answers:
+                            full = load_full_data()
+                            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+                        
+                        st.session_state.pending_study_time = 0
+                        st.session_state.unsaved_answers = False
+                        st.success("✅ 保存完了！")
+                        time.sleep(1)
+                        st.rerun()
 
-                # リセット処理
-                st.session_state.test_pool = []
-                st.session_state.pending_study_time = 0
-                st.session_state.unsaved_count = 0
-                st.session_state.unsaved_answers = False
-                if "last_action_time" in st.session_state:
-                    del st.session_state["last_action_time"]
-                    
-                st.success("✅ 学習記録を保存して終了しました！お疲れ様です。")
-                time.sleep(2)
-                st.rerun()
+            with col_btn2:
+                # ⏹️ 学習終了ボタン（残りを保存して退出）
+                if st.button("⏹️ 終了して退出", type="primary", use_container_width=True):
+                    with st.spinner('最終データを保存中...'):
+                        curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                        if st.session_state.pending_study_time > 0:
+                            update_study_time(current_user, st.session_state.pending_study_time, curr_field)
+                        if st.session_state.unsaved_answers:
+                            full = load_full_data()
+                            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+                            
+                    st.session_state.test_pool = []
+                    st.session_state.pending_study_time = 0
+                    st.session_state.unsaved_answers = False
+                    if "last_action_time" in st.session_state:
+                        del st.session_state["last_action_time"]
+                    st.success("✅ お疲れ様でした！記録は完全に保存されました。")
+                    time.sleep(1)
+                    st.rerun()
 
         # 📖 現在の問題を表示
         curr = st.session_state.test_pool[0]
@@ -1067,51 +1084,32 @@ if mode_select in ["学習モード", "復習モード"]:
         for i in range(6):
             if cols[i].button(f"{i}点", key=f"b{i}"):
                 
-                # 🌟 時間計算とカウントアップ
+                # 🌟 時間計算とメモリの更新（通信は一切行わない）
                 elapsed = time.time() - st.session_state.last_action_time
                 st.session_state.pending_study_time += elapsed
                 st.session_state.last_action_time = time.time() # タイマーリセット
-                st.session_state.unsaved_count += 1 # 👈 未保存の解答数を1増やす
                 
-                # 履歴とメモリの更新（この時点ではまだクラウドに送らない）
                 st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
                 idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
                 
                 today_str = datetime.today().strftime('%Y-%m-%d')
                 st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
-                st.session_state.unsaved_answers = True 
+                st.session_state.unsaved_answers = True # 未保存フラグをONにする
                 
-                # 🌟 ノルマ達成チェック
+                # 🌟 ノルマ達成チェック（メモリ上で判定）
                 done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
                 if done_today == 20:
                     try:
                         logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
-                        already_sent = logs[(logs['date'] == today_str) & 
-                                            (logs['user'] == current_user) & 
-                                            (logs['type'] == 'completed')]
-                        if already_sent.empty:
-                            msg = f"✅ 【速報】\n{current_user}が本日のノルマ(20問)を達成しました！\n\n彼は自由の身です。まだ終わっていない他のメンバーは、猛烈に自分を恥じなさい。"
+                        if logs[(logs['date'] == today_str) & (logs['user'] == current_user) & (logs['type'] == 'completed')].empty:
+                            msg = f"✅ 【速報】\n{current_user}が本日の目標を突破しました！\n\n彼は自由の身です。まだ終わっていない他のメンバーは、猛烈に自分を恥じなさい。"
                             if send_line_notification(msg):
                                 new_log = pd.DataFrame([[today_str, current_user, "completed"]], columns=["date", "user", "type"])
                                 conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
                                 st.toast("🎉 ノルマ達成をLINEで通知しました！")
-                    except Exception as e:
-                        pass
+                    except: pass
 
-                # 🌟 【新機能】5問解くごとにバックグラウンドで自動セーブ！
-                if st.session_state.unsaved_count >= 5:
-                    try:
-                        update_study_time(current_user, st.session_state.pending_study_time, curr['field'])
-                        full = load_full_data()
-                        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
-                        
-                        st.session_state.pending_study_time = 0
-                        st.session_state.unsaved_count = 0
-                        st.session_state.unsaved_answers = False
-                        st.toast("💾 5問分のデータを自動セーブしました！")
-                    except Exception as e:
-                        st.toast("⚠️ 自動セーブに失敗しましたが、学習は継続できます。")
-
+                # 🌟 バックグラウンド保存を削除し、純粋に次の問題へ進むだけ！（爆速）
                 st.session_state.test_pool.pop(0)
                 st.rerun()
 
@@ -1123,9 +1121,6 @@ if mode_select in ["学習モード", "復習モード"]:
             st.session_state.db.loc[idx, ['level', 'last_date']] = [last['old_level'], last['old_date']]
             st.session_state.test_pool.insert(0, st.session_state.db.loc[idx].to_dict('records')[0])
             st.session_state.unsaved_answers = True 
-            
-            # 戻った分、未保存カウントを減らす（マイナスにはしない）
-            st.session_state.unsaved_count = max(0, st.session_state.unsaved_count - 1)
             st.rerun()
             
         if c2.button("⏭️ 後回しにする", use_container_width=True):
