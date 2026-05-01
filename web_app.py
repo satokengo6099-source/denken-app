@@ -999,8 +999,17 @@ elif mode_select == mono_label:
 # 3️⃣ 学習モード ＆ 復習モードの分岐
 elif mode_select in ["学習モード", "復習モード"]:
     
+    # 🌟 コールバック関数：ボタンが押された瞬間に確実にデータをセット（バグ回避用）
+    def start_test(pool_df):
+        st.session_state.test_pool = pool_df.to_dict('records')
+        st.session_state.history = []
+        st.session_state.pending_study_time = 0
+        st.session_state.unsaved_count = 0
+        st.session_state.unsaved_answers = False
+        st.session_state.last_action_time = time.time()
+
     # 🌟 A. 進行中のテストがあれば、優先して解答エリアを表示！
-    if st.session_state.get("test_pool"):
+    if st.session_state.get("test_pool") and len(st.session_state.test_pool) > 0:
         
         if "pending_study_time" not in st.session_state: st.session_state.pending_study_time = 0
         if "unsaved_count" not in st.session_state: st.session_state.unsaved_count = 0
@@ -1128,14 +1137,12 @@ elif mode_select in ["学習モード", "復習モード"]:
             st.session_state.dash_full_df = load_full_data()
 
         # 🌟 【最終兵器】日付「YYYY-MM-DD」特有の「- (ハイフン)」が含まれるかだけで判定！
-        # ハイフンが無ければ、どんな見えない文字が入っていようと「未着手」とみなします。
         is_unstarted = ~st.session_state.db['last_date'].astype(str).str.contains("-", na=False)
 
         # 学習モードの準備画面
         if mode_select == "学習モード":
             st.title(f"⚡ 学習：{current_user}")
             
-            # ハイフンが無い（未着手）データだけを抽出
             unstarted_df = st.session_state.db[is_unstarted].copy()
 
             if unstarted_df.empty:
@@ -1148,21 +1155,21 @@ elif mode_select in ["学習モード", "復習モード"]:
                 final_pool_df = unstarted_df if selected_field == "すべて" else unstarted_df[unstarted_df['field'] == selected_field]
 
                 st.info(f"対象： **{selected_field}** （未着手問題：{len(final_pool_df)}問）")
-                if st.button("🚀 この内容で学習を開始する", use_container_width=True):
-                    st.session_state.test_pool = final_pool_df.to_dict('records')
-                    st.session_state.history = []
-                    st.rerun()
+                
+                # 🌟 コールバック（on_click）を使ってバグを回避し、確実にスタートさせる！
+                st.button("🚀 この内容で学習を開始する", use_container_width=True, on_click=start_test, args=(final_pool_df,))
 
         # 復習モードの準備画面
         elif mode_select == "復習モード":
             st.title(f"🔄 復習：{current_user}")
             
-            # ハイフンが有る（着手済み） かつ レベル5未満 を抽出
             review_df = st.session_state.db[(~is_unstarted) & (st.session_state.db['level'].astype(int) < 5)].copy()
             review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
             
-            st.info(f"現在の復習対象: {len(review_df)} 問")
-            if st.button("🔥 復習開始", use_container_width=True):
-                st.session_state.test_pool = review_df.to_dict('records')
-                st.session_state.history = []
-                st.rerun()
+            if review_df.empty:
+                st.success("🎉 現在、復習が必要な問題（レベル5未満）はありません！")
+            else:
+                st.info(f"現在の復習対象: {len(review_df)} 問")
+                
+                # 🌟 コールバック（on_click）を使ってバグを回避し、確実にスタートさせる！
+                st.button("🔥 復習開始", use_container_width=True, on_click=start_test, args=(review_df,))
