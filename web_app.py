@@ -788,16 +788,27 @@ elif mode_select == "分析ダッシュボード":
         with col_p2:
             st.markdown("##### 📖 分野ごとの単元別理解度")
             attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
-            for field_name in attempted['field'].unique():
-                st.markdown(f"###### 📘 {field_name}")
-                unit_acc = attempted[attempted['field'] == field_name].groupby('unit')['accuracy'].mean().reset_index()
-                chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
-                    x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                    y=alt.Y('unit', title='単元', sort='-x'),
-                    color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
-                    tooltip=[alt.Tooltip('unit'), alt.Tooltip('accuracy', format='.1f')]
-                ).properties(height=200)
-                st.altair_chart(chart_unit, use_container_width=True)
+            
+            unique_fields = attempted['field'].unique()
+            if len(unique_fields) > 0:
+                # 🌟 【改善1】分野ごとに「タブ」を作成して横にスッキリまとめる
+                tabs = st.tabs([str(f) for f in unique_fields])
+                
+                for idx, field_name in enumerate(unique_fields):
+                    with tabs[idx]:
+                        unit_acc = attempted[attempted['field'] == field_name].groupby('unit')['accuracy'].mean().reset_index()
+                        
+                        # 🌟 【改善2】単元の数に合わせてグラフの高さを自動計算（最低150px、1単元あたり40px確保）
+                        chart_height = max(150, len(unit_acc) * 40)
+                        
+                        chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
+                            x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                            y=alt.Y('unit', title='単元', sort='-x'),
+                            color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
+                            tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+                        ).properties(height=chart_height)
+                        
+                        st.altair_chart(chart_unit, use_container_width=True)
     else: st.info("解答データがありません。")
 
     st.subheader("⏱️ 分野別の学習時間 (累計)")
