@@ -655,11 +655,18 @@ elif mode_select == "分析ダッシュボード":
             st.cache_data.clear() # 他のキャッシュも念のためクリア
             st.rerun()
 
-    # --- 🌟 データの読み込み（メモリになければ取得し、永続保存） ---
+# --- 🌟 データの読み込み（メモリになければ取得し、永続保存） ---
     if "dash_full_df" not in st.session_state:
         with st.spinner("最新データを取得中..."):
-            st.session_state.dash_full_df = conn.read(spreadsheet=target_url, worksheet="Sheet1", ttl=0)
             
+            # 🌟 【鉄壁防御】メインデータ（Sheet1）もエラーから守る！
+            try:
+                st.session_state.dash_full_df = conn.read(spreadsheet=target_url, worksheet="Sheet1", ttl=0)
+            except Exception as e:
+                # 通信制限でエラーが起きた場合は、とりあえずキャッシュ（load_full_data）で代用してクラッシュを防ぐ
+                st.session_state.dash_full_df = load_full_data()
+                st.toast("⚠️ 通信制限中です。一部古いデータが表示されている可能性があります。1分後に再更新してください。")
+                
             try:
                 t_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=0)
                 t_df['study_seconds'] = pd.to_numeric(t_df['study_seconds'], errors='coerce').fillna(0)
