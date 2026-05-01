@@ -668,41 +668,99 @@ if mode_select == "分析ダッシュボード":
     st.table(pd.DataFrame(comparison))
 
     st.divider()
-    st.subheader("⏱️ メンバー学習時間比較")
+    st.subheader("⏱️ メンバー学習時間推移")
+    
     if not time_df.empty:
-        today_str = datetime.today().strftime('%Y-%m-%d')
-        this_month_prefix = datetime.today().strftime('%Y-%m')
-        
-        today_data = time_df[time_df['date'] == today_str].groupby('user')['study_minutes'].sum().reset_index()
-        month_data = time_df[time_df['date'].str.startswith(this_month_prefix, na=False)].groupby('user')['study_minutes'].sum().reset_index()
+        # 🌟 グラフの色を各ユーザーで完全に固定する
+        user_list = sorted(time_df['user'].unique().tolist())
+        color_scale = alt.Scale(domain=user_list, scheme='tableau10')
+
+        # 日ごとに全ユーザーの学習時間を集計（折れ線グラフ用）
+        daily_df = time_df.groupby(['date', 'user'])['study_minutes'].sum().reset_index()
+        # 累計データ（棒グラフ用）
         total_data = time_df.groupby('user')['study_minutes'].sum().reset_index()
         
-        col_g1, col_g2, col_g3 = st.columns(3)
-        def create_altair_chart(data, title):
-            return alt.Chart(data).mark_bar().encode(
-                x=alt.X('user', title='ユーザー'),
-                y=alt.Y('study_minutes', title='学習時間 (分)'),
-                color=alt.Color('user', title='ユーザー', scale=alt.Scale(scheme='tableau10')), 
-                tooltip=[alt.Tooltip('user', title='ユーザー'), alt.Tooltip('study_minutes', title='時間 (分)', format='.1f')]
-            ).properties(title=title)
-
-        with col_g1:
-            st.markdown("##### 📅 今日の学習 (分)")
-            if not today_data.empty and today_data['study_minutes'].sum() > 0:
-                st.altair_chart(create_altair_chart(today_data, '今日の学習'), use_container_width=True)
-            else: st.info("今日の記録はまだありません")
+        # 🌟 タブを作成
+        tab_w, tab_m, tab_t = st.tabs(["📅 週間推移", "🗓️ 月間推移", "🏆 累計学習"])
+        
+        # --- 📅 タブ1：週間推移（折れ線グラフ） ---
+        with tab_w:
+            st.markdown("##### 📅 週間推移 (月曜始まり)")
+            try:
+                min_date_str = time_df['date'].min()
+                min_date = datetime.strptime(min_date_str, '%Y-%m-%d').date()
+            except:
+                min_date = datetime.today().date()
                 
-        with col_g2:
-            st.markdown("##### 🗓️ 今月の学習 (分)")
-            if not month_data.empty and month_data['study_minutes'].sum() > 0:
-                st.altair_chart(create_altair_chart(month_data, '今月の学習'), use_container_width=True)
-            else: st.info("今月の記録はまだありません")
+            oldest_monday = min_date - timedelta(days=min_date.weekday())
+            current_monday = datetime.today().date() - timedelta(days=datetime.today().date().weekday())
+            
+            # 選択肢のリストを作成（デフォルトが「今週」になるように最新を一番上にする）
+            week_choices = []
+            temp_monday = current_monday
+            while temp_monday >= oldest_monday:
+                temp_sunday = temp_monday + timedelta(days=6)
+                label = f"{temp_monday.month}月{temp_monday.day}日 〜 {temp_sunday.month}月{temp_sunday.day}日"
+                if temp_monday == current_monday:
+                    label = "今週 (" + label + ")"
+                week_choices.append({"label": label, "monday": temp_monday})
+                temp_monday -= timedelta(days=7)
+            
+            selected_label = st.selectbox("確認したい週を選択", [w["label"] for w in week_choices], key="week_select")
+            start_of_week = next(w["monday"] for w in week_choices if w["label"] == selected_label)
+            
+            week_dates = [(start_of_week + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7)]
+            week_data = daily_df[daily_df['date'].isin(week_dates)]
+            
+            if not week_data.empty:
+                chart_w = alt.Chart(week_data).mark_line(point=True, size=3).encode(
+                    x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d', tickCount=7)),
+                    y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
+                    color=alt.Color('user:N', title='ユーザー', scale=color_scale),
+                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('date:T', title='日付', format='%Y/%m/%d'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
+                ).properties(height=350)
+                st.altair_chart(chart_w, use_container_width=True)
+            else: 
+                st.info("この週の学習記録はありません。")
+            
+        # --- 🗓️ タブ2：月間推移（折れ線グラフ） ---
+        with tab_m:
+            st.markdown("##### 🗓️ 月間推移")
+            col_y, col_m = st.columns(2)
+            today_date = datetime.today()
+            
+            with col_y:
+                sel_year = st.selectbox("年を選択", [today_date.year, today_date.year-1, today_date.year-2], index=0, key="month_year")
+            with col_m:
+                sel_month = st.selectbox("月を選択", list(range(1, 13)), index=today_date.month-1, key="month_month")
                 
-        with col_g3:
-            st.markdown("##### 🏆 累計学習 (分)")
-            if not total_data.empty and total_data['study_minutes'].sum() > 0:
-                st.altair_chart(create_altair_chart(total_data, '累計学習'), use_container_width=True)
-            else: st.info("累計記録はまだありません")
+            month_prefix = f"{sel_year}-{sel_month:02d}"
+            month_data = daily_df[daily_df['date'].str.startswith(month_prefix, na=False)]
+            
+            if not month_data.empty:
+                chart_m = alt.Chart(month_data).mark_line(point=True, size=3).encode(
+                    x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d')),
+                    y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
+                    color=alt.Color('user:N', title='ユーザー', scale=color_scale),
+                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('date:T', title='日付', format='%Y/%m/%d'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
+                ).properties(height=350)
+                st.altair_chart(chart_m, use_container_width=True)
+            else: 
+                st.info("この月の学習記録はありません。")
+            
+        # --- 🏆 タブ3：累計学習（棒グラフ） ---
+        with tab_t:
+            st.markdown("##### 🏆 累計学習時間")
+            if not total_data.empty:
+                chart_t = alt.Chart(total_data).mark_bar().encode(
+                    x=alt.X('user:N', title='ユーザー'),
+                    y=alt.Y('study_minutes:Q', title='累計学習時間 (分)'),
+                    color=alt.Color('user:N', title='ユーザー', scale=color_scale),
+                    tooltip=[alt.Tooltip('user:N', title='ユーザー'), alt.Tooltip('study_minutes:Q', title='時間 (分)', format='.1f')]
+                ).properties(height=350)
+                st.altair_chart(chart_t, use_container_width=True)
+            else: 
+                st.info("記録なし")
     else:
         st.info("学習時間の記録がまだありません。")
 
