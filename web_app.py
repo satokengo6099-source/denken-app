@@ -912,47 +912,46 @@ if mode_select == "分析ダッシュボード":
         st.error(f"休日設定の読み込みエラー: {e}")
 
     st.divider()
-    st.subheader("🚩 メンバー別 苦手単元ランキング（正答率順）")
+    st.subheader("🚩 メンバー別 分野別スコア・ワースト7")
     cols = st.columns(len(USER_CONFIG.keys()))
     for idx, user in enumerate(USER_CONFIG.keys()):
         with cols[idx]:
-            st.markdown(f"**👤 {user}の弱点**")
+            st.markdown(f"**👤 {user}の苦手分野**")
             u_df = full_df_ana[full_df_ana['user'] == user].copy()
             if not u_df.empty:
-                # 単元名を抽出
-                u_df['単元'] = u_df['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
+                # 数値変換と着手判定
                 u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
                 u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
                 
-                # 集計：単元ごとに「実際に解いた数」と「レベル3以上の数」を計算
-                u_res = u_df.groupby(['field', '単元']).agg(
-                    correct=('level_num', lambda x: (x >= 3).sum()), 
+                # 分野（field）ごとに「合計点数」と「着手した問題数」を集計
+                u_res = u_df.groupby('field').agg(
+                    total_score=('level_num', 'sum'),
                     done_q=('is_done', 'sum')
                 ).reset_index()
                 
-                # 🌟 1問でも着手した問題がある単元だけに絞る
+                # 着手済みの分野だけに絞る
                 u_res = u_res[u_res['done_q'] > 0].copy()
                 
                 if not u_res.empty:
-                    # 🌟 定義通り「着手した問題の正答率」を計算
-                    u_res['正答率'] = (u_res['correct'] / u_res['done_q'] * 100).round(1)
+                    # 定義：(合計獲得点数) / (着手数 * 5点満点) * 100
+                    u_res['達成率'] = (u_res['total_score'] / (u_res['done_q'] * 5) * 100).round(1)
                     
-                    # 🌟 正答率の低い順（0%〜）にすべての単元を表示
-                    worst_ranking = u_res.sort_values('正答率', ascending=True)
+                    # 🌟 達成率が低い順（昇順）にソートし、最大7件に制限
+                    worst_ranking = u_res.sort_values('達成率', ascending=True).head(7)
                     
                     for r in worst_ranking.itertuples():
-                        # 正答率が低いものは赤(error)、高いものは緑(success)などで色分けすると見やすいですが、
-                        # ここでは一貫して弱点リストとして表示します
-                        if r.正答率 < 50:
-                            st.error(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
-                        elif r.正答率 < 80:
-                            st.warning(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
+                        # ご指定の条件で色分け
+                        if r.達成率 <= 50:
+                            st.error(f"🔴 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                        elif r.達成率 >= 70:
+                            st.success(f"🟢 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
                         else:
-                            st.success(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
+                            st.warning(f"🟡 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
                 else:
                     st.info("着手済みの問題がありません")
             else:
                 st.write("データなし")
+
 
     st.divider()
     st.subheader("🚩 メンバー別 分野別スコアランキング（平均点順）")
