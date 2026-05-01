@@ -1121,15 +1121,22 @@ elif mode_select in ["学習モード", "復習モード"]:
             st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
             st.rerun()
 
+    
     # 🌟 B. 進行中のテストがない場合は、それぞれの「準備画面」を表示
     else:
         if "dash_full_df" not in st.session_state:
             st.session_state.dash_full_df = load_full_data()
 
+        # 🌟 【鉄壁フィルター】空欄や見えないスペース、特殊なnanをすべて「空」として判定する
+        empty_markers = ["", "nan", "none", "<na>", "nat"]
+        is_unstarted = st.session_state.db['last_date'].astype(str).str.strip().str.lower().isin(empty_markers)
+
         # 学習モードの準備画面
         if mode_select == "学習モード":
             st.title(f"⚡ 学習：{current_user}")
-            unstarted_df = st.session_state.db[st.session_state.db['last_date'].isin(["", "nan", "None", "NaN", "<NA>"])].copy()
+            
+            # 鉄壁フィルターを使って「未着手」だけを抽出
+            unstarted_df = st.session_state.db[is_unstarted].copy()
 
             if unstarted_df.empty:
                 st.success("🎉 おめでとうございます！すべての問題を一度は解きました。復習モードへ進みましょう！")
@@ -1149,7 +1156,9 @@ elif mode_select in ["学習モード", "復習モード"]:
         # 復習モードの準備画面
         elif mode_select == "復習モード":
             st.title(f"🔄 復習：{current_user}")
-            review_df = st.session_state.db[(~st.session_state.db['last_date'].isin(["", "nan", "NaN", "None", "<NA>"])) & (st.session_state.db['level'] < 5)].copy()
+            
+            # 鉄壁フィルターを使って「未着手ではない（~is_unstarted）」かつ「レベル5未満」を抽出
+            review_df = st.session_state.db[(~is_unstarted) & (st.session_state.db['level'].astype(int) < 5)].copy()
             review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
             
             st.info(f"現在の復習対象: {len(review_df)} 問")
