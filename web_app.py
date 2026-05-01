@@ -620,42 +620,90 @@ st.sidebar.markdown("""
 
 
 # --- 6. メインコンテンツの分岐 ---
-if mode_select == "学習モード":
-    st.title(f"⚡ 学習：{current_user}")
-    fields = ["すべて"] + list(db['field'].unique())
-    selected_field = st.selectbox("分野を選択", fields, key="field_selector")
-    pool = [q for q in unstarted_list if selected_field == "すべて" or q["field"] == selected_field]
+if mode_select in ["学習モード", "復習モード"]:
+    # 🌟 タイミング1：モードが選択された瞬間に、メモリにデータがなければ1回だけ読み込む
+    if "dash_full_df" not in st.session_state:
+        st.session_state.dash_full_df = load_full_data()
     
-    if st.button("🚀 学習開始", use_container_width=True):
-        st.session_state.test_pool = pool
-        st.session_state.history = []
-        st.rerun()
+    # メモリ上の最新データを使用
+    db_local = st.session_state.dash_full_df[st.session_state.dash_full_df['user'] == current_user].copy()
 
-elif mode_select == "復習モード":
-    st.title(f"🔄 復習：{current_user}")
-    review_pool = [q for q in db.to_dict('records') if str(q.get("last_date", "")) not in ["", "nan", "None", "NaN"] and int(q.get("level", 0)) < 5]
-    
-    # 🌟 【修正箇所】ここが「分野(field) -> 点数(level) -> 問題番号(q_num)」の順で並び替える魔法です！
-    review_pool.sort(key=lambda x: (str(x.get("field", "")), int(x.get("level", 0)), str(x.get("q_num", ""))))
-    
-    if st.button("🔥 復習開始", use_container_width=True):
-        st.session_state.test_pool = review_pool
-        st.session_state.history = []
-        st.rerun()
-
-elif mode_select == "分析ダッシュボード":
-    # 🌟 【完全手動更新システム】
-    col_t1, col_t2 = st.columns([3, 1])
-    with col_t1:
-        st.title(f"📊 分析：{current_user}")
-    with col_t2:
-        st.write("") # 位置合わせ用
-        if st.button("🔄 最新データに更新", use_container_width=True):
-            for key in ["dash_full_df", "dash_time_df", "dash_goal_df", "dash_holiday_df"]:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.cache_data.clear() 
+    if mode_select == "学習モード":
+        st.title(f"⚡ 学習：{current_user}")
+        # 未着手（last_dateが空）を抽出
+        unstarted = db_local[db_local['last_date'].isin(["", "nan", "None", "NaN"])].to_dict('records')
+        
+        fields = ["すべて"] + sorted(list(set(q["field"] for q in unstarted)))
+        selected_field = st.selectbox("分野を選択", fields, key="field_selector")
+        pool = [q for q in unstarted if selected_field == "すべて" or q["field"] == selected_field]
+        
+        # 🌟 タイミング2：学習開始ボタン
+        if st.button("🚀 学習開始", use_container_width=True):
+            st.session_state.test_pool = pool
+            st.session_state.history = []
             st.rerun()
+
+    elif mode_select == "復習モード":
+        st.title(f"🔄 復習：{current_user}")
+        # 実施済み かつ レベル5未満
+        review_data = db_local[
+            (~db_local['last_date'].isin(["", "nan", "None", "NaN"])) & 
+            (db_local['level'].astype(int) < 5)
+        ].copy()
+        
+        # ご要望通りのソート（分野 -> 点数 -> 問題番号）
+        review_data = review_data.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
+        review_pool = review_data.to_dict('records')
+        
+        # 🌟 タイミング2：復習開始ボタン
+        if st.button("🔥 復習開始", use_container_width=True):
+            st.session_state.test_pool = review_pool
+            st.session_state.history = []
+            st.rerun()
+
+# --- 💡 解答画面（テスト中）のロジックへのアドバイス ---
+# ※「 st.session_state.test_pool 」がある時の処理の中も以下のルールで書き換える必要があります：
+
+# 🌟 タイミング3 & 4：保存処理の関数を共通化する
+def save_study_results():
+    """溜まった履歴(st.session_state.history)をスプレッドシートに一括書き込みする"""
+    if not st.session_state.history:
+        return
+        
+    try:
+        # メインデータを再取得（他人の更新と衝突しないように）
+        current_full = load_full_data()
+        
+        # 履歴を反映
+        for record in st.session_state.history:
+            mask = (current_full['user'] == record['user']) & \
+                   (current_full['field'] == record['field']) & \
+                   (current_full['q_num'] == record['q_num'])
+            current_full.loc[mask, 'level'] = record['level']
+            current_full.loc[mask, 'last_date'] = record['last_date']
+        
+        # 一括書き込み
+        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=current_full)
+        
+        # 🌟 メモリ(st.session_state)も更新して、再読み込みを防ぐ
+        st.session_state.dash_full_df = current_full
+        # 履歴を空にする
+        st.session_state.history = []
+        st.toast("✅ データをクラウドに同期しました！")
+    except Exception as e:
+        st.error(f"保存エラー: {e}")
+
+# 【解答画面での使い方イメージ】
+# 1. 点数ボタンが押された時:
+#    st.session_state.history.append(...) するだけ（ここでは保存しない！）
+#    if len(st.session_state.history) >= 5:
+#        save_study_results()  <-- ここで初めて通信！
+
+# 2. 「終了して退出」ボタンが押された時:
+#    save_study_results()
+#    st.session_state.test_pool = None
+#    st.rerun()
+
 
     # --- 🌟 データの読み込み（メモリになければ取得し、永続保存） ---
     if "dash_full_df" not in st.session_state:
