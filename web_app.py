@@ -954,6 +954,47 @@ if mode_select == "分析ダッシュボード":
             else:
                 st.write("データなし")
 
+    st.divider()
+    st.subheader("🚩 メンバー別 分野別スコアランキング（平均点順）")
+    cols = st.columns(len(USER_CONFIG.keys()))
+    for idx, user in enumerate(USER_CONFIG.keys()):
+        with cols[idx]:
+            st.markdown(f"**👤 {user}の習得状況**")
+            u_df = full_df_ana[full_df_ana['user'] == user].copy()
+            if not u_df.empty:
+                # 数値変換と着手判定
+                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
+                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
+                
+                # 🌟 分野（field）ごとに「合計点数」と「着手した問題数」を集計
+                u_res = u_df.groupby('field').agg(
+                    total_score=('level_num', 'sum'),
+                    done_q=('is_done', 'sum')
+                ).reset_index()
+                
+                # 着手済みの分野だけに絞る
+                u_res = u_res[u_res['done_q'] > 0].copy()
+                
+                if not u_res.empty:
+                    # 🌟 定義：(合計獲得点数) / (着手数 * 5点満点) * 100
+                    u_res['達成率'] = (u_res['total_score'] / (u_res['done_q'] * 5) * 100).round(1)
+                    
+                    # 🌟 パーセンテージが高い順（降順）に並び替え
+                    ranking = u_res.sort_values('達成率', ascending=False)
+                    
+                    for r in ranking.itertuples():
+                        # 🌟 ご指定の条件で色分け
+                        if r.達成率 >= 70:
+                            st.success(f"🟢 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                        elif r.達成率 <= 50:
+                            st.error(f"🔴 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                        else:
+                            st.warning(f"🟡 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                else:
+                    st.info("着手済みの問題がありません")
+            else:
+                st.write("データなし")
+
 # 2️⃣ 独り言掲示板
 elif mode_select == mono_label:
     st.title(f"📝 {mono_label.replace(' 🔴', '')}")
