@@ -1017,15 +1017,7 @@ def save_study_results():
     except Exception as e:
         st.error(f"休日設定エラー: {e}")
 
-    
-
-
-
-
-
-
-
-elif mode_select == mono_label:
+    elif mode_select == mono_label:
     st.title(f"📝 {mono_label.replace(' 🔴', '')}")
     
     # 既読更新
@@ -1068,6 +1060,8 @@ elif mode_select == mono_label:
                     st.rerun()
                 except Exception as e:
                     st.error(f"送信に失敗しました: {e}")
+
+
 
     # タイムライン表示
     st.divider()
