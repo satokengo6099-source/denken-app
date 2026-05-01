@@ -1160,7 +1160,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                 st.button("🚀 この内容で学習を開始する", use_container_width=True, on_click=start_test, args=(final_pool_df,))
 
         # 学習モードの準備画面
-        else if mode_select == "復習モード":
+        elif mode_select == "復習モード":
             st.title(f"⚡ 学習：{current_user}")
             
             # 🌟 満点（5点）未満の問題をすべて抽出（未着手は0点として扱われるため含まれます）
