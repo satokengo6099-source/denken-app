@@ -619,7 +619,7 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- 6. メインコンテンツの分岐 ---
+    # --- 6. メインコンテンツの分岐 ---
 if mode_select in ["学習モード", "復習モード"]:
     # 🌟 タイミング1：モードが選択された瞬間に、メモリにデータがなければ1回だけ読み込む
     if "dash_full_df" not in st.session_state:
@@ -1105,7 +1105,7 @@ elif mode_select == mono_label:
 
 
 # --- 7. 共通の問題表示・解答エリア ---
-if mode_select in ["学習モード", "復習モード"]:
+elif mode_select in ["学習モード", "復習モード"]:
     if st.session_state.get("test_pool"):
         
         # 🌟 初期化：一時保存用と「自動セーブカウンター」を準備
