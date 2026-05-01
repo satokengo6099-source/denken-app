@@ -922,14 +922,31 @@ if mode_select == "分析ダッシュボード":
                 u_df['単元'] = u_df['q_num'].str.split('No').str[0]
                 u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
                 u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-                u_res = u_df.groupby(['field', '単元']).agg(total=('q_num', 'count'), correct=('level_num', lambda x: (x >= 3).sum()), done_q=('is_done', 'sum')).reset_index()
-                u_res['正答率'] = (u_res['correct'] / u_res['total'] * 100).round(1)
-                worst = u_res[u_res['done_q'] > 0].sort_values('正答率').head(7)
-                if not worst.empty:
+                
+                # 集計
+                u_res = u_df.groupby(['field', '単元']).agg(
+                    total=('q_num', 'count'), 
+                    correct=('level_num', lambda x: (x >= 3).sum()), 
+                    done_q=('is_done', 'sum')
+                ).reset_index()
+                
+                # 🌟 修正ポイント1：計算前に「1問でも解いたことがある単元」だけに絞る（0割りエラー防止）
+                u_res = u_res[u_res['done_q'] > 0].copy()
+                
+                if not u_res.empty:
+                    # 🌟 修正ポイント2：分母を「全問題数(total)」ではなく「解いた数(done_q)」にする！
+                    u_res['正答率'] = (u_res['correct'] / u_res['done_q'] * 100).round(1)
+                    
+                    # 正答率が低い順にワースト7を抽出
+                    worst = u_res.sort_values('正答率').head(7)
+                    
                     for r in worst.itertuples():
-                        st.error(f"{r.field}：{r.単元}\n({r.正答率}%)")
+                        # r.done_q を表示に入れると「何問中何問正解か」が裏付けとして分かって便利です
+                        st.error(f"{r.field}：{r.単元}\n({r.正答率}% : {r.correct}/{r.done_q}問)")
                 else:
-                    st.success("弱点なし")
+                    st.success("弱点なし（未着手）")
+            else:
+                st.write("データなし")
 
 # 2️⃣ 独り言掲示板
 elif mode_select == mono_label:
