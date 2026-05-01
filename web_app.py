@@ -1159,17 +1159,26 @@ elif mode_select in ["学習モード", "復習モード"]:
                 # 🌟 コールバック（on_click）を使ってバグを回避し、確実にスタートさせる！
                 st.button("🚀 この内容で学習を開始する", use_container_width=True, on_click=start_test, args=(final_pool_df,))
 
-        # 復習モードの準備画面
-        elif mode_select == "復習モード":
-            st.title(f"🔄 復習：{current_user}")
+        # 学習モードの準備画面
+        else if mode_select == "復習モード":
+            st.title(f"⚡ 学習：{current_user}")
             
-            review_df = st.session_state.db[(~is_unstarted) & (st.session_state.db['level'].astype(int) < 5)].copy()
-            review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
+            # 🌟 満点（5点）未満の問題をすべて抽出（未着手は0点として扱われるため含まれます）
+            learning_df = st.session_state.db[st.session_state.db['level'].astype(int) < 5].copy()
             
-            if review_df.empty:
-                st.success("🎉 現在、復習が必要な問題（レベル5未満）はありません！")
+            # 🌟 ご要望通り、分野ごとにまとめ、点数が低い順（0点→1点→2点...）にソート
+            learning_df = learning_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
+
+            if learning_df.empty:
+                st.success("🎉 素晴らしい！すべての問題を完璧（満点）にマスターしました！")
             else:
-                st.info(f"現在の復習対象: {len(review_df)} 問")
+                field_list = sorted(learning_df['field'].unique().tolist())
+                field_options = ["すべて"] + field_list
+                selected_field = st.selectbox("学習する分野（科目）を選んでください", field_options, key="learn_field_select")
+
+                final_pool_df = learning_df if selected_field == "すべて" else learning_df[learning_df['field'] == selected_field]
+
+                st.info(f"対象： **{selected_field}** （対象問題：{len(final_pool_df)}問）")
                 
                 # 🌟 コールバック（on_click）を使ってバグを回避し、確実にスタートさせる！
-                st.button("🔥 復習開始", use_container_width=True, on_click=start_test, args=(review_df,))
+                st.button("🚀 この内容で学習を開始する", use_container_width=True, on_click=start_test, args=(final_pool_df,))
