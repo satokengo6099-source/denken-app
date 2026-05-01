@@ -516,7 +516,7 @@ has_unread = check_unread_monologue(current_user)
 mono_label = "ただの独り言 🔴" if has_unread else "ただの独り言"
 
 st.sidebar.divider()
-mode_select = st.sidebar.radio("機能", [,"学習モード", "復習モード", "分析ダッシュボード", mono_label])
+mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
 
 
 # 📅 試験日カウントダウンと進捗計算
