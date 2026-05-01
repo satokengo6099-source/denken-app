@@ -361,37 +361,39 @@ def generate_report_message(full_df):
     msg += "※不満なら今すぐ机に向かえ。"
     return msg
 
+
 def check_and_trigger_report():
     """1日の各タイミング（朝の報告・20時警告）で通知を飛ばす"""
-    if st.session_state.get("report_checked", False):
-        return
-
     now_jst = datetime.now(JST)
     today_str = now_jst.strftime('%Y-%m-%d')
     now_hour = now_jst.hour
 
     # --- A. 朝の進捗レポート送信 ---
-    try:
-        sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=600)
-        if sys_df.empty or len(sys_df.columns) == 0:
-            st.error("Systemシートが空です！1行目のA列に『last_report_date』と入力してください。")
-            return
-            
-        last_sent = str(sys_df.iloc[0, 0]) if not sys_df.empty else ""
+    # 🌟 朝のチェックフラグを独立させる
+    if not st.session_state.get("morning_checked", False):
+        try:
+            sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=600)
+            if sys_df.empty or len(sys_df.columns) == 0:
+                st.error("Systemシートが空です！1行目のA列に『last_report_date』と入力してください。")
+            else:
+                last_sent = str(sys_df.iloc[0, 0]) if not sys_df.empty else ""
+                
+                if last_sent != today_str:
+                    conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
+                    full_df = load_full_data()
+                    report_msg = generate_report_message(full_df)
+                    if send_line_notification(report_msg):
+                        st.toast("LINEへ進捗レポートを送信しました📩")
+        except Exception as e:
+            st.error(f"朝のレポート送信エラー: {e}")
         
-        if last_sent != today_str:
-            conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
-            full_df = load_full_data()
-            report_msg = generate_report_message(full_df)
-            if send_line_notification(report_msg):
-                st.toast("LINEへ進捗レポートを送信しました📩")
-    except Exception as e:
-        st.error(f"朝のレポート送信エラー: {e}")
+        # チェックが完了したら朝用のフラグを立てる
+        st.session_state["morning_checked"] = True
 
 
-
-# --- B. 20時の未完了警告送信 ---
-    if now_hour >= 20:
+    # --- B. 20時の未完了警告送信 ---
+    # 🌟 20時以降 かつ 20時用のフラグが立っていない場合のみ実行
+    if now_hour >= 20 and not st.session_state.get("warning_checked", False):
         try:
             try:
                 logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=1200)
@@ -405,7 +407,7 @@ def check_and_trigger_report():
             if warning_sent.empty:
                 full_df = load_full_data()
                 
-                # 🌟 【追加】各ユーザーの目標期日を読み込む
+                # 各ユーザーの目標期日を読み込む
                 try:
                     goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=600)
                 except:
@@ -455,7 +457,7 @@ def check_and_trigger_report():
                     if daily_pace <= 0:
                         continue # ノルマ0（全問完了済みなど）ならスキップ
 
-                    # 🌟 5. 今日の進捗と「本当のノルマ」を比較！
+                    # 5. 今日の進捗と「本当のノルマ」を比較！
                     done_today = len(u_df[u_df['last_date'] == today_str])
                     if done_today < daily_pace:
                         unfinished.append(f"・{user} (現在{done_today}問 / ノルマ{daily_pace}問)")
@@ -469,7 +471,8 @@ def check_and_trigger_report():
         except Exception as e:
             st.error(f"20時警告エラー: {e}")
 
-    st.session_state["report_checked"] = True
+        # チェックが完了したら20時用のフラグを立てる
+        st.session_state["warning_checked"] = True
 
 def check_unread_monologue(current_user):
     """独り言掲示板の未読があるかチェック"""
