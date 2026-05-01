@@ -1127,15 +1127,15 @@ elif mode_select in ["学習モード", "復習モード"]:
         if "dash_full_df" not in st.session_state:
             st.session_state.dash_full_df = load_full_data()
 
-        # 🌟 【鉄壁フィルター】空欄や見えないスペース、特殊なnanをすべて「空」として判定する
-        empty_markers = ["", "nan", "none", "<na>", "nat"]
-        is_unstarted = st.session_state.db['last_date'].astype(str).str.strip().str.lower().isin(empty_markers)
+        # 🌟 【最終兵器】日付「YYYY-MM-DD」特有の「- (ハイフン)」が含まれるかだけで判定！
+        # ハイフンが無ければ、どんな見えない文字が入っていようと「未着手」とみなします。
+        is_unstarted = ~st.session_state.db['last_date'].astype(str).str.contains("-", na=False)
 
         # 学習モードの準備画面
         if mode_select == "学習モード":
             st.title(f"⚡ 学習：{current_user}")
             
-            # 鉄壁フィルターを使って「未着手」だけを抽出
+            # ハイフンが無い（未着手）データだけを抽出
             unstarted_df = st.session_state.db[is_unstarted].copy()
 
             if unstarted_df.empty:
@@ -1157,7 +1157,7 @@ elif mode_select in ["学習モード", "復習モード"]:
         elif mode_select == "復習モード":
             st.title(f"🔄 復習：{current_user}")
             
-            # 鉄壁フィルターを使って「未着手ではない（~is_unstarted）」かつ「レベル5未満」を抽出
+            # ハイフンが有る（着手済み） かつ レベル5未満 を抽出
             review_df = st.session_state.db[(~is_unstarted) & (st.session_state.db['level'].astype(int) < 5)].copy()
             review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
             
