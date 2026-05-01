@@ -9,34 +9,7 @@ import json
 import time
 import altair as alt  # 👈 ファイルの先頭付近に追加！
 
-# ==========================================
-# 🌟 【事前準備】保存関数（コードの最上段、load_full_dataの下あたりに配置）
-# ==========================================
-def save_study_results():
-    """あなたが決めた『4つのタイミング』のみで動く一括保存関数"""
-    if st.session_state.get("unsaved_count", 0) == 0 and st.session_state.get("pending_time", 0) <= 0:
-        return
-        
-    try:
-        with st.spinner('クラウドと同期中...'):
-            # 学習時間を更新（タイミング3, 4）
-            if st.session_state.pending_time > 0:
-                curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                update_study_time(current_user, st.session_state.pending_time, curr_field)
-            
-            # メインデータを一括書き込み
-            full = load_full_data()
-            other_users = full[full['user'] != current_user]
-            # 自分の最新データ(st.session_state.db)を合体
-            new_full = pd.concat([other_users, st.session_state.db], ignore_index=True)
-            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
-            
-            # 成功したら状態をリセット
-            st.session_state.pending_time = 0
-            st.session_state.unsaved_count = 0
-            st.toast("✅ クラウドへの同期が完了しました！")
-    except Exception as e:
-        st.error(f"同期エラー: {e}")
+
 
 # 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
