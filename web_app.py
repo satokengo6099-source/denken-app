@@ -643,7 +643,7 @@ elif mode_select == "復習モード":
         st.session_state.history = []
         st.rerun()
 
-elif mode_select == "分析ダッシュボード":
+elif mode_select == "":
     # 🌟 【完全手動更新システム】
     col_t1, col_t2 = st.columns([3, 1])
     with col_t1:
@@ -711,6 +711,35 @@ elif mode_select == "分析ダッシュボード":
     else:
         st.success(f"✅ 昨日は {done_yesterday} 問の努力が確認されました。")
 
+
+        # --- 📅 目標期日 ＆ 休日設定エリア ---
+    st.divider()
+    st.info(f"💡 {current_user}さんの目標設定")
+    try:
+        my_goal_row = goal_df[goal_df['user'] == current_user]
+        default_date = datetime.today() + timedelta(days=115)
+        if not my_goal_row.empty:
+            default_date = datetime.strptime(my_goal_row.iloc[0]['goal_date'], '%Y-%m-%d')
+        new_goal = st.date_input("個人の目標期日を変更する", default_date, key="goal_date_input")
+        if st.button("目標期日を更新する", key="goal_btn"):
+            new_goal_str = new_goal.strftime('%Y-%m-%d')
+            if not my_goal_row.empty:
+                idx = goal_df[goal_df['user'] == current_user].index[0]
+                goal_df.loc[idx, 'goal_date'] = new_goal_str
+            else:
+                new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
+                goal_df = pd.concat([goal_df, new_row], ignore_index=True)
+            
+            conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
+            st.session_state.dash_goal_df = goal_df # 🌟 メモリも即座に更新！
+            st.success(f"目標期日を {new_goal_str} に更新しました！")
+            time.sleep(1)
+            st.rerun()
+    except Exception as e:
+        st.error(f"目標期日エラー: {e}")
+
+    
+
     st.divider()
     # 🏁 進捗比較
     st.subheader("🏁 メンバー進捗比較")
@@ -744,22 +773,42 @@ elif mode_select == "分析ダッシュボード":
         
         with tab_w:
             st.markdown("##### 📅 週間推移の振り返り")
-            # ユーザーが日付を選ぶと、その日が含まれる「月曜〜日曜」を自動計算する
-            selected_date = st.date_input("確認したい週の日付を選択", value=datetime.today().date(), key="week_select")
             
-            # 曜日を計算（Pythonのweekday()は月曜が0、日曜が6）
-            start_of_week = selected_date - timedelta(days=selected_date.weekday())
-            end_of_week = start_of_week + timedelta(days=6)
+            # 🌟 【改善】学習記録が存在する一番古い週から今週までのリストを自動生成
+            try:
+                min_date_str = time_df['date'].min()
+                min_date = datetime.strptime(min_date_str, '%Y-%m-%d').date()
+            except:
+                min_date = datetime.today().date()
+                
+            # 一番古い記録の週の「月曜日」を特定
+            oldest_monday = min_date - timedelta(days=min_date.weekday())
+            # 今週の「月曜日」を特定
+            current_monday = datetime.today().date() - timedelta(days=datetime.today().date().weekday())
             
-            week_title_str = f"{start_of_week.month}月{start_of_week.day}日 から {end_of_week.month}月{end_of_week.day}日"
-            st.info(f"表示期間： **{week_title_str}**")
+            # 最新の週から過去に向かって選択肢のリストを作る
+            week_choices = []
+            temp_monday = current_monday
+            while temp_monday >= oldest_monday:
+                temp_sunday = temp_monday + timedelta(days=6)
+                label = f"{temp_monday.month}月{temp_monday.day}日 〜 {temp_sunday.month}月{temp_sunday.day}日"
+                week_choices.append({"label": label, "monday": temp_monday})
+                temp_monday -= timedelta(days=7) # 1週間（7日）戻る
+            
+            # プルダウンで選択させる
+            selected_label = st.selectbox("確認したい週を選択してください", [w["label"] for w in week_choices], key="week_select")
+            
+            # 選ばれたラベルから、その週の月曜日を取り出す
+            start_of_week = next(w["monday"] for w in week_choices if w["label"] == selected_label)
+            
+            st.info(f"表示期間： **{selected_label}**")
             
             # その週の7日間分の文字列リストを作成してデータを絞り込む
             week_dates = [(start_of_week + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7)]
             week_data = daily_df[daily_df['date'].isin(week_dates)]
             
             if not week_data.empty:
-                # 🌟 scale=color_scale で各ユーザーの担当カラーを強制ロック
+                # scale=color_scale で各ユーザーの担当カラーを強制ロック
                 chart_w = alt.Chart(week_data).mark_line(point=True, size=3).encode(
                     x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d', tickCount=7)),
                     y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
@@ -789,7 +838,7 @@ elif mode_select == "分析ダッシュボード":
             month_data = daily_df[daily_df['date'].str.startswith(month_prefix, na=False)]
             
             if not month_data.empty:
-                # 🌟 ここも色をロック
+                # ここも色をロック
                 chart_m = alt.Chart(month_data).mark_line(point=True, size=3).encode(
                     x=alt.X('date:T', title='日付', axis=alt.Axis(format='%m/%d')),
                     y=alt.Y('study_minutes:Q', title='学習時間 (分)'),
@@ -803,7 +852,7 @@ elif mode_select == "分析ダッシュボード":
         with tab_t:
             st.markdown("##### 🏆 累計学習時間")
             if not total_data.empty:
-                # 🌟 当然、累計の棒グラフも同じ色で統一
+                # 当然、累計の棒グラフも同じ色で統一
                 chart_t = alt.Chart(total_data).mark_bar().encode(
                     x=alt.X('user:N', title='ユーザー'),
                     y=alt.Y('study_minutes:Q', title='累計学習時間 (分)'),
@@ -879,33 +928,66 @@ elif mode_select == "分析ダッシュボード":
                 ).properties(height=300)
                 st.altair_chart(chart_time, use_container_width=True)
 
-    # --- 📅 目標期日 ＆ 休日設定エリア ---
-    st.divider()
-    st.info(f"💡 {current_user}さんの目標設定")
-    try:
-        my_goal_row = goal_df[goal_df['user'] == current_user]
-        default_date = datetime.today() + timedelta(days=115)
-        if not my_goal_row.empty:
-            default_date = datetime.strptime(my_goal_row.iloc[0]['goal_date'], '%Y-%m-%d')
-        new_goal = st.date_input("個人の目標期日を変更する", default_date, key="goal_date_input")
-        if st.button("目標期日を更新する", key="goal_btn"):
-            new_goal_str = new_goal.strftime('%Y-%m-%d')
-            if not my_goal_row.empty:
-                idx = goal_df[goal_df['user'] == current_user].index[0]
-                goal_df.loc[idx, 'goal_date'] = new_goal_str
-            else:
-                new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
-                goal_df = pd.concat([goal_df, new_row], ignore_index=True)
-            
-            conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
-            st.session_state.dash_goal_df = goal_df # 🌟 メモリも即座に更新！
-            st.success(f"目標期日を {new_goal_str} に更新しました！")
-            time.sleep(1)
-            st.rerun()
-    except Exception as e:
-        st.error(f"目標期日エラー: {e}")
 
+
+    
+
+    # 🚩 各ユーザーの苦手単元ワースト
     st.divider()
+    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
+    cols = st.columns(len(USER_CONFIG.keys()))
+    for idx, user in enumerate(USER_CONFIG.keys()):
+        with cols[idx]:
+            st.markdown(f"**👤 {user}の弱点**")
+            u_df = full_df_ana[full_df_ana['user'] == user].copy()
+            if not u_df.empty:
+                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
+                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
+                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
+                attempted_df = u_df[u_df['is_done']].copy()
+                if not attempted_df.empty:
+                    attempted_df['理解度'] = (attempted_df['level_num'] / 5.0) * 100
+                    u_res = attempted_df.groupby(['field', '単元'])['理解度'].mean().reset_index()
+                    u_res['理解度'] = u_res['理解度'].round(1)
+                    worst = u_res.sort_values('理解度').head(7)
+                    if not worst.empty:
+                        for r in worst.itertuples():
+                            st.error(f"{r.field}：{r.単元}\n({r.理解度}%)")
+                    else:
+                        st.success("弱点なし")
+                else:
+                    st.success("弱点データなし\n（または未着手）")
+
+
+
+
+
+
+
+
+    # --- ⏱️ 2. 分野別の学習時間 ---
+    st.subheader("⏱️ 分野別の学習時間 (累計)")
+    
+    # 🌟 【改善】読み込み直さず、一番上で取得した time_df を使い回す
+    if not time_df.empty:
+        user_time = time_df[time_df['user'] == current_user].copy()
+        if not user_time.empty:
+            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
+            field_time = field_time[field_time['study_minutes'] > 0]
+            if not field_time.empty:
+                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta(field="study_minutes", type="quantitative"),
+                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
+                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+                ).properties(height=300)
+                st.altair_chart(chart_time, use_container_width=True)
+
+    
+
+
+
+
+        st.divider()
     st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
     try:
         my_holidays = sorted(list(set(holiday_df[holiday_df['user'] == current_user]['holiday_date'].dropna().tolist())))
@@ -955,138 +1037,6 @@ elif mode_select == "分析ダッシュボード":
                 st.write("登録されている休日はありません。")
     except Exception as e:
         st.error(f"休日設定エラー: {e}")
-
-    # 🚩 各ユーザーの苦手単元ワースト
-    st.divider()
-    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
-    cols = st.columns(len(USER_CONFIG.keys()))
-    for idx, user in enumerate(USER_CONFIG.keys()):
-        with cols[idx]:
-            st.markdown(f"**👤 {user}の弱点**")
-            u_df = full_df_ana[full_df_ana['user'] == user].copy()
-            if not u_df.empty:
-                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
-                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-                attempted_df = u_df[u_df['is_done']].copy()
-                if not attempted_df.empty:
-                    attempted_df['理解度'] = (attempted_df['level_num'] / 5.0) * 100
-                    u_res = attempted_df.groupby(['field', '単元'])['理解度'].mean().reset_index()
-                    u_res['理解度'] = u_res['理解度'].round(1)
-                    worst = u_res.sort_values('理解度').head(7)
-                    if not worst.empty:
-                        for r in worst.itertuples():
-                            st.error(f"{r.field}：{r.単元}\n({r.理解度}%)")
-                    else:
-                        st.success("弱点なし")
-                else:
-                    st.success("弱点データなし\n（または未着手）")
-
-
-
-
-
-
-    # ==========================================
-    # 👤 個人専用ダッシュボード
-    # ==========================================
-    st.divider()
-    st.header(f"👤 {current_user} 専用ダッシュボード")
-    st.caption("※このデータはあなたしか見ることができません。")
-
-    # --- 🎯 1. 分野・単元別の正解率 ---
-    st.subheader("🎯 分野・単元別の正解率（理解度）")
-    user_db = full_df_ana[full_df_ana['user'] == current_user].copy()
-    attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
-
-    if not attempted.empty:
-        attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
-        attempted['accuracy'] = (attempted['level'] / 5.0) * 100
-        col_p1, col_p2 = st.columns(2)
-        
-        with col_p1:
-            st.markdown("##### 📚 分野別の理解度")
-            field_acc = attempted.groupby('field')['accuracy'].mean().reset_index()
-            chart_field = alt.Chart(field_acc).mark_bar(opacity=0.8).encode(
-                x=alt.X('field', title='分野'),
-                y=alt.Y('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                color=alt.Color('field', legend=None, scale=alt.Scale(scheme='set2')),
-                tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-            ).properties(height=300)
-            st.altair_chart(chart_field, use_container_width=True)
-            
-        with col_p2:
-            st.markdown("##### 📖 分野ごとの単元別理解度")
-            attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
-            unique_fields = attempted['field'].unique()
-            for field_name in unique_fields:
-                st.markdown(f"###### 📘 {field_name}")
-                field_data = attempted[attempted['field'] == field_name]
-                unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
-                chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
-                    x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                    y=alt.Y('unit', title='単元', sort='-x'),
-                    color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
-                    tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-                ).properties(height=200)
-                st.altair_chart(chart_unit, use_container_width=True)
-    else:
-        st.info("解答データがありません。")
-
-    # --- ⏱️ 2. 分野別の学習時間 ---
-    st.subheader("⏱️ 分野別の学習時間 (累計)")
-    
-    # 🌟 【改善】読み込み直さず、一番上で取得した time_df を使い回す
-    if not time_df.empty:
-        user_time = time_df[time_df['user'] == current_user].copy()
-        if not user_time.empty:
-            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
-            field_time = field_time[field_time['study_minutes'] > 0]
-            if not field_time.empty:
-                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
-                    theta=alt.Theta(field="study_minutes", type="quantitative"),
-                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
-                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
-                ).properties(height=300)
-                st.altair_chart(chart_time, use_container_width=True)
-
-    
-
-    # 🚩 各ユーザーの苦手単元ワースト
-    st.divider()
-    st.subheader("🚩 メンバー別 苦手単元ワースト7 ")
-    cols = st.columns(len(USER_CONFIG.keys()))
-    for idx, user in enumerate(USER_CONFIG.keys()):
-        with cols[idx]:
-            st.markdown(f"**👤 {user}の弱点**")
-            u_df = full_df_ana[full_df_ana['user'] == user].copy()
-            if not u_df.empty:
-                # 単元名の抽出と型の固定
-                u_df['単元'] = u_df['q_num'].str.split('No').str[0]
-                u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
-                u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
-                
-                # 🌟 1. 「着手済み」の問題だけに絞り込む（未着手による正答率低下を防ぐ）
-                attempted_df = u_df[u_df['is_done']].copy()
-                
-                if not attempted_df.empty:
-                    # 🌟 2. 個人ダッシュボードと同じ「5点満点中の理解度(%)」を計算
-                    attempted_df['理解度'] = (attempted_df['level_num'] / 5.0) * 100
-                    
-                    # 単元ごとに平均理解度を算出
-                    u_res = attempted_df.groupby(['field', '単元'])['理解度'].mean().reset_index()
-                    u_res['理解度'] = u_res['理解度'].round(1)
-                    
-                    # 🌟 3. 理解度が低い順に並べ替え（本当に苦手なものだけ抽出）
-                    worst = u_res.sort_values('理解度').head(7)
-                    
-                    if not worst.empty:
-                        for r in worst.itertuples():
-                            st.error(f"{r.field}：{r.単元}\n({r.理解度}%)")
-                    else:
-                        st.success("弱点なし")
-                else:
-                    st.success("弱点データなし\n（または未着手）")
 
 
 
