@@ -208,9 +208,14 @@ target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 def load_full_data():
     """スプレッドシートから全データを読み込み、型を整える"""
     try:
-        # 🌟 【爆速化の要】ttl=15 から ttl=600 (10分) に大幅アップ！
-        # これにより、解答ボタンを押すたびに発生していた通信ラグが消滅します。
+        # ttl=600 でキャッシュを活用しつつ読み込む
         df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4], ttl=600)
+        
+        # 🌟 鉄壁の防御：もし万が一「空のデータ」が読み込まれたら異常事態として即停止！
+        if df.empty:
+            st.error("🚨 警告: スプレッドシートのデータが0件として読み込まれました。誤ったデータ上書きを防ぐため、システムを安全に停止します。少し待ってからリロードしてください。")
+            st.stop()
+
         df = df.dropna(how="all")
         
         # 型の強制固定（エラー防止）
@@ -220,10 +225,11 @@ def load_full_data():
             df[col] = df[col].astype(str).str.strip()
             
         return df
+        
     except Exception as e:
-        st.error(f"データ読み込みエラー: {e}")
-        return pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
-
+        # 🌟 鉄壁の防御：エラー時は「空のデータ」を返さず、即座にシステムを停止させる！
+        st.error(f"🚨 致命的な通信エラー: スプレッドシートの読み込みに失敗しました。データを保護するためアプリを停止します。\n詳細: {e}")
+        st.stop()
 def sync_user_data(full_df, user_name):
     """USER_CONFIGに基づいて未登録の問題を生成し、スプレッドシートを更新する"""
     user_df = full_df[full_df['user'] == user_name].copy()
