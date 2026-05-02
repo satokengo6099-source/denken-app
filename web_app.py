@@ -242,24 +242,27 @@ def load_full_data():
             sheet_name = f"Sheet_{user}"
             df = conn.read(spreadsheet=target_url, worksheet=sheet_name, usecols=[0, 1, 2, 3, 4], ttl=600)
             
-            if not df.empty:
-                df = df.dropna(how="all")
-                df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
-                df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
-                for col in ['user', 'field', 'q_num']:
-                    df[col] = df[col].astype(str).str.strip()
-                all_dfs.append(df)
-            else:
-                # 🌟 シートはあるが、見出しだけでデータが0件の場合（初回）は空箱を用意！
-                empty_df = pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
-                all_dfs.append(empty_df)
-        except Exception as e:
-            # シートがまだ無いなどのエラー時はスキップ
-            pass
+            # 🌟 データが空（見出しのみ等）だった場合は、空箱を作らずに安全のため「強制停止」させる！
+            if df.empty:
+                st.error(f"🚨 警告: 『{sheet_name}』のデータが0件として読み込まれました。誤ったリセット（データ消失）を防ぐため、システムを安全に停止します。少し待ってからリロードしてください。")
+                st.stop()
+
+            # データが存在する場合のみ以下の処理を行う
+            df = df.dropna(how="all")
+            df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
+            df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
+            for col in ['user', 'field', 'q_num']:
+                df[col] = df[col].astype(str).str.strip()
+            all_dfs.append(df)
             
+        except Exception as e:
+            # 🌟 エラーが起きた場合は、自動復帰システムに丸投げする！
+            handle_api_error(e)
+            
+    # 全員のシートが読み込めなかった場合の最終防衛ライン
     if not all_dfs:
-        # 万が一すべて失敗した場合も、エラーで止めずに空箱を返す（この後自動生成が走ります）
-        return pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
+        st.error("🚨 致命的なエラー: どのユーザーのデータも読み込めませんでした。データを保護するため停止します。")
+        st.stop()
         
     return pd.concat(all_dfs, ignore_index=True)
 
