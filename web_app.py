@@ -912,41 +912,44 @@ if mode_select == "分析ダッシュボード":
         st.error(f"休日設定の読み込みエラー: {e}")
 
     st.divider()
-    st.subheader("🚩 メンバー別 分野別スコア・ワースト7")
+    st.subheader("🚩 メンバー別 単元別スコア・ワースト7")
     cols = st.columns(len(USER_CONFIG.keys()))
     for idx, user in enumerate(USER_CONFIG.keys()):
         with cols[idx]:
-            st.markdown(f"**👤 {user}の苦手分野**")
+            st.markdown(f"**👤 {user}の苦手単元**")
             u_df = full_df_ana[full_df_ana['user'] == user].copy()
             if not u_df.empty:
+                # 🌟 単元名を抽出（q_numから「No」より前の文字を取り出す）
+                u_df['単元'] = u_df['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
+                
                 # 数値変換と着手判定
                 u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
                 u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
                 
-                # 分野（field）ごとに「合計点数」と「着手した問題数」を集計
-                u_res = u_df.groupby('field').agg(
+                # 🌟 「分野」と「単元」のセットごとに「合計点数」と「着手した問題数」を集計
+                u_res = u_df.groupby(['field', '単元']).agg(
                     total_score=('level_num', 'sum'),
                     done_q=('is_done', 'sum')
                 ).reset_index()
                 
-                # 着手済みの分野だけに絞る
+                # 着手済みの単元だけに絞る
                 u_res = u_res[u_res['done_q'] > 0].copy()
                 
                 if not u_res.empty:
                     # 定義：(合計獲得点数) / (着手数 * 5点満点) * 100
                     u_res['達成率'] = (u_res['total_score'] / (u_res['done_q'] * 5) * 100).round(1)
                     
-                    # 🌟 達成率が低い順（昇順）にソートし、最大7件に制限
+                    # 達成率が低い順（昇順）にソートし、最大7件に制限
                     worst_ranking = u_res.sort_values('達成率', ascending=True).head(7)
                     
                     for r in worst_ranking.itertuples():
-                        # ご指定の条件で色分け
+                        # ご指定の条件で色分け（分野名と単元名を両方表示）
                         if r.達成率 <= 50:
-                            st.error(f"🔴 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                            st.error(f"🔴 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
                         elif r.達成率 >= 70:
-                            st.success(f"🟢 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                            st.success(f"🟢 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
                         else:
-                            st.warning(f"🟡 {r.field}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                            st.warning(f"🟡 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
                 else:
                     st.info("着手済みの問題がありません")
             else:
