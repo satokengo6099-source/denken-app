@@ -9,7 +9,31 @@ import json
 import time
 import altair as alt  # 👈 ファイルの先頭付近に追加！
 
-
+# 🌟 429エラー発生時のカウントダウン＆自動更新システム
+def handle_api_error(e):
+    error_msg = str(e).lower()
+    # 429エラーやアクセス制限系のエラーか判定
+    if "429" in error_msg or "too many requests" in error_msg or "quota" in error_msg:
+        st.error("🚨 Googleの通信制限（429エラー）が発生しました。一時待機します。")
+        
+        # カウントダウン表示用の空箱を用意
+        timer_placeholder = st.empty()
+        
+        # 45秒のカウントダウン
+        for i in range(45, 0, -1):
+            timer_placeholder.warning(f"⏳ 復帰までお待ちください... {i}秒後に自動で再試行します。")
+            time.sleep(1)
+            
+        timer_placeholder.success("🔄 通信制限が解除されました！自動更新を実行します！")
+        time.sleep(1)
+        
+        # 変なキャッシュが残らないように一度クリアしてリロード
+        st.cache_data.clear()
+        st.rerun()
+    else:
+        # 429以外のエラーの場合は、今まで通りストップさせる
+        st.error(f"🚨 通信エラーが発生しました。データを保護するためアプリを停止します。\n詳細: {e}")
+        st.stop()
 
 # 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
@@ -75,7 +99,7 @@ def update_study_time(current_user, elapsed_seconds, field="未分類"):
             
         conn.update(spreadsheet=target_url, worksheet="StudyTime", data=df)
     except Exception as e:
-        st.error(f"時間記録エラー: {e}")
+        handle_api_error(e)
 
 # --- 2. ユーザー別個別設定 ---
 USER_CONFIG = {
@@ -227,9 +251,8 @@ def load_full_data():
         return df
         
     except Exception as e:
-        # 🌟 鉄壁の防御：エラー時は「空のデータ」を返さず、即座にシステムを停止させる！
-        st.error(f"🚨 致命的な通信エラー: スプレッドシートの読み込みに失敗しました。データを保護するためアプリを停止します。\n詳細: {e}")
-        st.stop()
+        handle_api_error(e)
+        
 def sync_user_data(full_df, user_name):
     """USER_CONFIGに基づいて未登録の問題を生成し、スプレッドシートを更新する"""
     user_df = full_df[full_df['user'] == user_name].copy()
@@ -584,7 +607,7 @@ try:
                 
                 if already_sent.empty:
                     # ☕ 優しいメッセージを送信（煽り一切なし！）
-                    msg = f"☕ 【お知らせ】\n{current_user}は今日、勉強おやすみです。\n\nたまには休息も必要ですね。しっかりリフレッシュしてください！"
+                    msg = f"☕ 【お知らせ】\n{current_user}は今日、勉強おやすみです。\n\nたまにはも必要ですね。しっかりリフレッシュしてください！"
                     
                     if send_line_notification(msg):
                         new_log = pd.DataFrame([[today_str, current_user, "holiday"]], columns=["date", "user", "type"])
@@ -882,7 +905,7 @@ if mode_select == "分析ダッシュボード":
             time.sleep(1)
             st.rerun()
     except Exception as e:
-        st.error(f"目標期日の読み込みエラー: {e}")
+        handle_api_error(e)
 
     st.divider()
     st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
@@ -930,7 +953,7 @@ if mode_select == "分析ダッシュボード":
             else:
                 st.write("登録されている休日はありません。")
     except Exception as e:
-        st.error(f"休日設定の読み込みエラー: {e}")
+        handle_api_error(e)
 
     st.divider()
     st.subheader("🚩 メンバー別 単元別スコア・ワースト7")
@@ -1014,7 +1037,7 @@ elif mode_select == mono_label:
                     time.sleep(1)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"送信に失敗しました: {e}")
+                    handle_api_error(e)
 
     st.divider()
     try:
@@ -1044,7 +1067,7 @@ elif mode_select == mono_label:
         else:
             st.info("まだ投稿がありません。最初の独り言をどうぞ。")
     except Exception as e:
-        st.error(f"表示エラー: {e}") 
+        handle_api_error(e)
 
 # 3️⃣ 学習モード ＆ 復習モードの分岐
 elif mode_select in ["学習モード", "復習モード"]:
@@ -1161,7 +1184,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                         st.session_state.unsaved_answers = False
                         st.toast("💾 5問分のデータを自動セーブしました！")
                     except Exception as e:
-                        st.toast("⚠️ 自動セーブに失敗しましたが、学習は継続できます。")
+                        handle_api_error(e)
 
                 st.session_state.test_pool.pop(0)
                 st.rerun()
