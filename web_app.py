@@ -1150,25 +1150,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                     time.sleep(1)
                     st.rerun()
 
-            with col_btn2:
-                if st.button("⏹️ 終了して退出", type="primary", use_container_width=True):
-                    with st.spinner('最終データを保存中...'):
-                        curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                        if st.session_state.pending_study_time > 0:
-                            update_study_time(current_user, st.session_state.pending_study_time, curr_field)
-                        if st.session_state.unsaved_answers:
-                            full = load_full_data()
-                            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
-                            
-                    st.session_state.test_pool = []
-                    st.session_state.pending_study_time = 0
-                    st.session_state.unsaved_count = 0
-                    st.session_state.unsaved_answers = False
-                    if "last_action_time" in st.session_state:
-                        del st.session_state["last_action_time"]
-                    st.success("✅ お疲れ様でした！記録は完全に保存されました。")
-                    time.sleep(1)
-                    st.rerun()
+            
 
         curr = st.session_state.test_pool[0]
         st.subheader(f"【{curr['field']}】 {curr['q_num']}")
