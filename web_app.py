@@ -249,13 +249,17 @@ def load_full_data():
                 for col in ['user', 'field', 'q_num']:
                     df[col] = df[col].astype(str).str.strip()
                 all_dfs.append(df)
+            else:
+                # 🌟 シートはあるが、見出しだけでデータが0件の場合（初回）は空箱を用意！
+                empty_df = pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
+                all_dfs.append(empty_df)
         except Exception as e:
-            # まだシートが作られていないなどの場合はスキップ
+            # シートがまだ無いなどのエラー時はスキップ
             pass
             
     if not all_dfs:
-        st.error("🚨 警告: データが1件も読み込めませんでした。スプレッドシートの設定を確認してください。")
-        st.stop()
+        # 万が一すべて失敗した場合も、エラーで止めずに空箱を返す（この後自動生成が走ります）
+        return pd.DataFrame(columns=["user", "field", "q_num", "level", "last_date"])
         
     return pd.concat(all_dfs, ignore_index=True)
 
