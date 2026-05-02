@@ -301,6 +301,10 @@ def sync_user_data(full_df, user_name):
         try:
             # 🌟 自分の専用シートだけに上書き保存！他人のデータは一切触らない！
             conn.update(spreadsheet=target_url, worksheet=f"Sheet_{user_name}", data=updated_user_df)
+            
+            # 👇👇 ここに追加します！ 👇👇
+            st.cache_data.clear()
+            
             return updated_user_df
         except Exception as e:
             handle_api_error(e)
