@@ -1107,7 +1107,8 @@ elif mode_select in ["学習モード", "復習モード"]:
             
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
-                if st.button("💾 クラウドに保存", disabled=not st.session_state.unsaved_answers, use_container_width=True):
+                # 🌟 key="save_btn_unique" を追加してIDを固定！
+                if st.button("💾 クラウドに保存", disabled=not st.session_state.unsaved_answers, use_container_width=True, key="save_btn_unique"):
                     with st.spinner('データを同期中...'):
                         curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
                         if st.session_state.pending_study_time > 0:
@@ -1115,7 +1116,6 @@ elif mode_select in ["学習モード", "復習モード"]:
                         
                         if st.session_state.unsaved_answers:
                             try:
-                                # 🌟 爆速化！自分の専用シートだけをピンポイントで更新！
                                 conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
                                 st.session_state.pending_study_time = 0
                                 st.session_state.unsaved_count = 0
@@ -1124,10 +1124,11 @@ elif mode_select in ["学習モード", "復習モード"]:
                                 time.sleep(1)
                                 st.rerun()
                             except Exception as e:
-                                handle_api_error(e) # 🌟 429エラー対策
+                                handle_api_error(e)
 
             with col_btn2:
-                if st.button("⏹️ 終了して退出", type="primary", use_container_width=True):
+                # 🌟 key="exit_btn_unique" を追加してIDを固定！
+                if st.button("⏹️ 終了して退出", type="primary", use_container_width=True, key="exit_btn_unique"):
                     with st.spinner('最終データを保存中...'):
                         curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
                         if st.session_state.pending_study_time > 0:
@@ -1135,10 +1136,9 @@ elif mode_select in ["学習モード", "復習モード"]:
                         
                         if st.session_state.unsaved_answers:
                             try:
-                                # 🌟 終了時も自分の専用シートだけを更新
                                 conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
                             except Exception as e:
-                                handle_api_error(e) # 🌟 429エラー対策
+                                handle_api_error(e)
                             
                     st.session_state.test_pool = []
                     st.session_state.pending_study_time = 0
