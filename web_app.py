@@ -9,6 +9,13 @@ import json
 import time
 import altair as alt  # 👈 ファイルの先頭付近に追加！
 
+# 👇👇 ここから追加 👇👇
+# 🌟 アプリ起動時（ブラウザを開いた瞬間）のみキャッシュをクリアし、確実に最新データを取得する
+if "is_startup" not in st.session_state:
+    st.cache_data.clear()
+    st.session_state.is_startup = True
+# 👆👆 ここまで追加 👆👆
+
 # 🌟 429エラー発生時のカウントダウン＆自動更新システム
 def handle_api_error(e):
     error_msg = str(e).lower()
