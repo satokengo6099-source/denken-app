@@ -229,48 +229,50 @@ FUTURE_CONFIG = {
 conn = st.connection("gsheets", type=GSheetsConnection)
 target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
-def load_full_data():
-    """スプレッドシートから全データを読み込み、型を整える"""
-    try:
-        # ttl=600 でキャッシュを活用しつつ読み込む
-        df = conn.read(spreadsheet=target_url, worksheet="Sheet1", usecols=[0, 1, 2, 3, 4], ttl=600)
-        
-        # 🌟 鉄壁の防御：もし万が一「空のデータ」が読み込まれたら異常事態として即停止！
-        if df.empty:
-            st.error("🚨 警告: スプレッドシートのデータが0件として読み込まれました。誤ったデータ上書きを防ぐため、システムを安全に停止します。少し待ってからリロードしてください。")
-            st.stop()
+# --- 3. データベース接続・型固定読み込み ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
-        df = df.dropna(how="all")
-        
-        # 型の強制固定（エラー防止）
-        df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
-        df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
-        for col in ['user', 'field', 'q_num']:
-            df[col] = df[col].astype(str).str.strip()
+def load_full_data():
+    """全ユーザーの個別シートを読み込んで結合する（競合防止＆爆速化）"""
+    all_dfs = []
+    for user in USER_CONFIG.keys():
+        try:
+            # ユーザーごとの専用シートを読み込む
+            sheet_name = f"Sheet_{user}"
+            df = conn.read(spreadsheet=target_url, worksheet=sheet_name, usecols=[0, 1, 2, 3, 4], ttl=600)
             
-        return df
+            if not df.empty:
+                df = df.dropna(how="all")
+                df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
+                df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
+                for col in ['user', 'field', 'q_num']:
+                    df[col] = df[col].astype(str).str.strip()
+                all_dfs.append(df)
+        except Exception as e:
+            # まだシートが作られていないなどの場合はスキップ
+            pass
+            
+    if not all_dfs:
+        st.error("🚨 警告: データが1件も読み込めませんでした。スプレッドシートの設定を確認してください。")
+        st.stop()
         
-    except Exception as e:
-        handle_api_error(e)
-        
+    return pd.concat(all_dfs, ignore_index=True)
+
 def sync_user_data(full_df, user_name):
-    """USER_CONFIGに基づいて未登録の問題を生成し、スプレッドシートを更新する"""
+    """USER_CONFIGに基づいて未登録の問題を生成し、個人の専用シートを更新する"""
     user_df = full_df[full_df['user'] == user_name].copy()
-    # 既存の問題をセットで管理（重複チェック用）
     existing_q = set(user_df['field'] + "_" + user_df['q_num'])
     
     structure = USER_CONFIG[user_name]["structure"]
     new_rows = []
     
     for item in structure:
-        field = str(item[0]) # 科目（例：理論2023）
-        cat = str(item[1])   # 分野（例：静電気）
+        field = str(item[0])
+        cat = str(item[1])   
         
-        # 形式の判定（要素が3つなら問題数、4つなら開始-終了番号）
-        if len(item) == 3:
-            start, end = 1, item[2]
-        else:
-            start, end = item[2], item[3]
+        if len(item) == 3: start, end = 1, item[2]
+        else: start, end = item[2], item[3]
             
         for i in range(start, end + 1):
             q_id = f"{cat}No{i}"
@@ -284,24 +286,18 @@ def sync_user_data(full_df, user_name):
                 })
                 
     if new_rows:
-        # 新しい問題を結合
+        # 新しい問題を結合した「その人だけのデータ」
         updated_user_df = pd.concat([user_df, pd.DataFrame(new_rows)], ignore_index=True)
-        # 他のユーザーのデータと合わせて全体を更新
-        other_users = full_df[full_df['user'] != user_name]
-        new_full = pd.concat([other_users, updated_user_df], ignore_index=True)
+        updated_user_df['level'] = updated_user_df['level'].astype(int)
+        updated_user_df['last_date'] = updated_user_df['last_date'].astype(str)
         
-        # 保存前に型を再固定
-        new_full['level'] = new_full['level'].astype(int)
-        new_full['last_date'] = new_full['last_date'].astype(str)
-        
-        # 🌟 【鉄壁防御】通信エラーが起きてもアプリを落とさずスルーする！
         try:
-            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=new_full)
+            # 🌟 自分の専用シートだけに上書き保存！他人のデータは一切触らない！
+            conn.update(spreadsheet=target_url, worksheet=f"Sheet_{user_name}", data=updated_user_df)
             return updated_user_df
         except Exception as e:
-            # エラー時は画面上に一瞬だけ警告を出し、アプリはそのまま動かし続ける
-            st.toast("⚠️ 通信制限のため新しい問題の同期をスキップしました。学習は継続できます。")
-            return user_df # 追加前の既存データをとりあえず返す
+            handle_api_error(e)
+            return user_df
         
     return user_df
 
@@ -1112,16 +1108,43 @@ elif mode_select in ["学習モード", "復習モード"]:
                         curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
                         if st.session_state.pending_study_time > 0:
                             update_study_time(current_user, st.session_state.pending_study_time, curr_field)
-                        if st.session_state.unsaved_answers:
-                            full = load_full_data()
-                            conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
                         
-                        st.session_state.pending_study_time = 0
-                        st.session_state.unsaved_count = 0
-                        st.session_state.unsaved_answers = False
-                        st.success("✅ 手動セーブ完了！")
-                        time.sleep(1)
-                        st.rerun()
+                        if st.session_state.unsaved_answers:
+                            try:
+                                # 🌟 爆速化！自分の専用シートだけをピンポイントで更新！
+                                conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
+                                st.session_state.pending_study_time = 0
+                                st.session_state.unsaved_count = 0
+                                st.session_state.unsaved_answers = False
+                                st.success("✅ 手動セーブ完了！")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                handle_api_error(e) # 🌟 429エラー対策
+
+            with col_btn2:
+                if st.button("⏹️ 終了して退出", type="primary", use_container_width=True):
+                    with st.spinner('最終データを保存中...'):
+                        curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                        if st.session_state.pending_study_time > 0:
+                            update_study_time(current_user, st.session_state.pending_study_time, curr_field)
+                        
+                        if st.session_state.unsaved_answers:
+                            try:
+                                # 🌟 終了時も自分の専用シートだけを更新
+                                conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
+                            except Exception as e:
+                                handle_api_error(e) # 🌟 429エラー対策
+                            
+                    st.session_state.test_pool = []
+                    st.session_state.pending_study_time = 0
+                    st.session_state.unsaved_count = 0
+                    st.session_state.unsaved_answers = False
+                    if "last_action_time" in st.session_state:
+                        del st.session_state["last_action_time"]
+                    st.success("✅ お疲れ様でした！記録は完全に保存されました。")
+                    time.sleep(1)
+                    st.rerun()
 
             with col_btn2:
                 if st.button("⏹️ 終了して退出", type="primary", use_container_width=True):
@@ -1176,15 +1199,16 @@ elif mode_select in ["学習モード", "復習モード"]:
                 if st.session_state.unsaved_count >= 5:
                     try:
                         update_study_time(current_user, st.session_state.pending_study_time, curr['field'])
-                        full = load_full_data()
-                        conn.update(spreadsheet=target_url, worksheet="Sheet1", data=pd.concat([full[full['user'] != current_user], st.session_state.db], ignore_index=True))
+                        
+                        # 🌟 5問セーブも自分の専用シートだけを更新
+                        conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
                         
                         st.session_state.pending_study_time = 0
                         st.session_state.unsaved_count = 0
                         st.session_state.unsaved_answers = False
                         st.toast("💾 5問分のデータを自動セーブしました！")
                     except Exception as e:
-                        handle_api_error(e)
+                        handle_api_error(e) # 🌟 429エラー対策
 
                 st.session_state.test_pool.pop(0)
                 st.rerun()
