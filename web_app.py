@@ -562,25 +562,40 @@ try:
     active_study_days = [d for d in total_days_range if d.strftime('%Y-%m-%d') not in my_h_list]
     net_days_left = len(active_study_days)
     
-    # 🌟 追加：今日が休みの日なら、アプリを開いた瞬間にLINEで1回だけ優しく通知する
+# 🌟 追加：今日が休みの日なら、アプリを開いた瞬間にLINEで1回だけ優しく通知する
     today_str = today_dt.strftime('%Y-%m-%d')
     if today_str in my_h_list:
-        try:
-            # 重複送信を防ぐためにログを確認
-            logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=15)
-            already_sent = logs[(logs['date'] == today_str) & 
-                                (logs['user'] == current_user) & 
-                                (logs['type'] == 'holiday')]
-            if already_sent.empty:
-                # ☕ 優しいメッセージを送信（煽り一切なし！）
-                msg = f"☕ 【お知らせ】\n{current_user}は今日、勉強おやすみです。\n\nたまには休息も必要ですね。しっかりリフレッシュしてください！"
+        session_flag = f"holiday_notified_{today_str}_{current_user}"
+        
+        # 🌟 【対策1】通信の「前」にフラグを確認＆即ロック！これで画面操作のたびに通信するのを防ぐ
+        if not st.session_state.get(session_flag, False):
+            st.session_state[session_flag] = True  # 即座にロック！
+            
+            try:
+                # 🌟 【対策2】ttl=600に戻して、Googleのアクセス制限（APIリミット）を回避！
+                logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
                 
-                if send_line_notification(msg):
-                    # 送信履歴を記録して、今日2回目以降は送らないようにする
-                    new_log = pd.DataFrame([[today_str, current_user, "holiday"]], columns=["date", "user", "type"])
-                    conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
-        except Exception as e:
-            print(f"休日通知エラー: {e}")
+                if 'date' not in logs.columns:
+                    logs = pd.DataFrame(columns=['date', 'user', 'type'])
+
+                already_sent = logs[(logs['date'] == today_str) & 
+                                    (logs['user'] == current_user) & 
+                                    (logs['type'] == 'holiday')]
+                
+                if already_sent.empty:
+                    # ☕ 優しいメッセージを送信（煽り一切なし！）
+                    msg = f"☕ 【お知らせ】\n{current_user}は今日、勉強おやすみです。\n\nたまには休息も必要ですね。しっかりリフレッシュしてください！"
+                    
+                    if send_line_notification(msg):
+                        new_log = pd.DataFrame([[today_str, current_user, "holiday"]], columns=["date", "user", "type"])
+                        conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
+                        
+                        # 🌟 【対策3】書き込んだ直後にStreamlitのキャッシュを「強制消去」！
+                        # これにより、ユーザーが画面をリロードしても「古いキャッシュを読んでまたLINEを送ってしまう」事故を100%防ぎます。
+                        st.cache_data.clear()
+
+            except Exception as e:
+                print(f"休日通知エラー: {e}")
 
 except Exception as e:
     net_days_left = max(1, (personal_target_date - today_dt).days)
