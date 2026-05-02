@@ -20,7 +20,7 @@ def handle_api_error(e):
         timer_placeholder = st.empty()
         
         # 45秒のカウントダウン
-        for i in range(45, 0, -1):
+        for i in range(60, 0, -1):
             timer_placeholder.warning(f"⏳ 復帰までお待ちください... {i}秒後に自動で再試行します。")
             time.sleep(1)
             
