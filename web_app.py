@@ -13,10 +13,7 @@ import altair as alt  # 👈 ファイルの先頭付近に追加！
 
 
 
-# 🌟 アプリ起動時（ブラウザを開いた瞬間）に「1回だけ」全データを読み込み、メモリに永続化する
-if "master_df" not in st.session_state:
-    with st.spinner("データベースから最新のデータを取得しています..."):
-        st.session_state.master_df = load_full_data()
+
 
 
 
@@ -546,6 +543,11 @@ def check_unread_monologue(current_user):
 # ==========================================
 
 # --- 5. メニュー切り替えとサイドバー（通知・進捗） ---
+
+# 🌟 アプリ起動時（ブラウザを開いた瞬間）に「1回だけ」全データを読み込み、メモリに永続化する
+if "master_df" not in st.session_state:
+    with st.spinner("データベースから最新のデータを取得しています..."):
+        st.session_state.master_df = load_full_data()
 
 st.sidebar.title("⚡ 電験学習管理システム")
 
