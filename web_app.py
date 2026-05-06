@@ -1,3 +1,5 @@
+#　429エラー対策、DBアクセス最適化
+
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
@@ -9,12 +11,15 @@ import json
 import time
 import altair as alt  # 👈 ファイルの先頭付近に追加！
 
-# 👇👇 ここから追加 👇👇
-# 🌟 アプリ起動時（ブラウザを開いた瞬間）のみキャッシュをクリアし、確実に最新データを取得する
-if "is_startup" not in st.session_state:
-    st.cache_data.clear()
-    st.session_state.is_startup = True
-# 👆👆 ここまで追加 👆👆
+
+
+# 🌟 アプリ起動時（ブラウザを開いた瞬間）に「1回だけ」全データを読み込み、メモリに永続化する
+if "master_df" not in st.session_state:
+    with st.spinner("データベースから最新のデータを取得しています..."):
+        st.session_state.master_df = load_full_data()
+
+
+
 
 # 🌟 429エラー発生時のカウントダウン＆自動更新システム
 def handle_api_error(e):
@@ -34,8 +39,7 @@ def handle_api_error(e):
         timer_placeholder.success("🔄 通信制限が解除されました！自動更新を実行します！")
         time.sleep(1)
         
-        # 変なキャッシュが残らないように一度クリアしてリロード
-        st.cache_data.clear()
+
         st.rerun()
     else:
         # 429以外のエラーの場合は、今まで通りストップさせる
@@ -309,8 +313,7 @@ def sync_user_data(full_df, user_name):
             # 🌟 自分の専用シートだけに上書き保存！他人のデータは一切触らない！
             conn.update(spreadsheet=target_url, worksheet=f"Sheet_{user_name}", data=updated_user_df)
             
-            # 👇👇 ここに追加します！ 👇👇
-            st.cache_data.clear()
+            
             
             return updated_user_df
         except Exception as e:
@@ -423,7 +426,7 @@ def check_and_trigger_report():
                 
                 if last_sent != today_str:
                     conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
-                    full_df = load_full_data()
+                    full_df = st.session_state.master_df.copy()
                     report_msg = generate_report_message(full_df)
                     if send_line_notification(report_msg):
                         st.toast("LINEへ進捗レポートを送信しました📩")
@@ -448,7 +451,7 @@ def check_and_trigger_report():
             warning_sent = logs[(logs['date'] == today_str) & (logs['type'] == '20h_warning')]
             
             if warning_sent.empty:
-                full_df = load_full_data()
+                full_df = st.session_state.master_df.copy()
                 
                 # 各ユーザーの目標期日を読み込む
                 try:
@@ -550,7 +553,7 @@ st.sidebar.title("⚡ 電験学習管理システム")
 current_user = st.sidebar.selectbox("👤 ユーザーを選択", list(USER_CONFIG.keys()))
 
 # 🌟 2. 【復活】選ばれたユーザーのデータを読み込む（これがないと後でエラーになります）
-full_df_main = load_full_data()
+full_df_main = st.session_state.master_df.copy()
 if 'db' not in st.session_state or st.session_state.get('current_user') != current_user:
     st.session_state.db = sync_user_data(full_df_main, current_user)
     st.session_state.current_user = current_user
@@ -627,9 +630,7 @@ try:
                         new_log = pd.DataFrame([[today_str, current_user, "holiday"]], columns=["date", "user", "type"])
                         conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
                         
-                        # 🌟 【対策3】書き込んだ直後にStreamlitのキャッシュを「強制消去」！
-                        # これにより、ユーザーが画面をリロードしても「古いキャッシュを読んでまたLINEを送ってしまう」事故を100%防ぎます。
-                        st.cache_data.clear()
+                        
 
             except Exception as e:
                 print(f"休日通知エラー: {e}")
@@ -689,7 +690,7 @@ st.sidebar.markdown("""
 # 1️⃣ 分析ダッシュボード
 if mode_select == "分析ダッシュボード":
     st.title(f"📊 分析ダッシュボード：{current_user}")
-    full_df_ana = load_full_data()
+    full_df_ana = st.session_state.master_df.copy()
     
     try:
         time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=600)
@@ -1131,6 +1132,11 @@ elif mode_select in ["学習モード", "復習モード"]:
                         if st.session_state.unsaved_answers:
                             try:
                                 conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
+                                
+                                # 🌟 【最適化】再ダウンロードせず、メモリ上の全体データを直接書き換える！
+                                master = st.session_state.master_df
+                                st.session_state.master_df = pd.concat([master[master['user'] != current_user], st.session_state.db], ignore_index=True)
+                                
                                 st.session_state.pending_study_time = 0
                                 st.session_state.unsaved_count = 0
                                 st.session_state.unsaved_answers = False
@@ -1151,6 +1157,11 @@ elif mode_select in ["学習モード", "復習モード"]:
                         if st.session_state.unsaved_answers:
                             try:
                                 conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
+                                
+                                # 🌟 【最適化】終了時もメモリを更新
+                                master = st.session_state.master_df
+                                st.session_state.master_df = pd.concat([master[master['user'] != current_user], st.session_state.db], ignore_index=True)
+                                
                             except Exception as e:
                                 handle_api_error(e)
                             
@@ -1192,6 +1203,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                             msg = f"✅ 【速報】\n{current_user}が本日の目標を突破しました！\n\n彼は自由の身です。まだ終わっていない他のメンバーは、猛烈に自分を恥じなさい。"
                             if send_line_notification(msg):
                                 new_log = pd.DataFrame([[today_str, current_user, "completed"]], columns=["date", "user", "type"])
+                                # 👇 エラー修正箇所1：conn.update が消えていたのを復旧
                                 conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
                                 st.toast("🎉 ノルマ達成をLINEで通知しました！")
                     except: pass
@@ -1200,15 +1212,19 @@ elif mode_select in ["学習モード", "復習モード"]:
                     try:
                         update_study_time(current_user, st.session_state.pending_study_time, curr['field'])
                         
-                        # 🌟 5問セーブも自分の専用シートだけを更新
+                        # 👇 エラー修正箇所2：conn.update が消えていたのを復旧
                         conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
+                        
+                        # 🌟 【最適化】5問セーブ時もメモリを更新
+                        master = st.session_state.master_df
+                        st.session_state.master_df = pd.concat([master[master['user'] != current_user], st.session_state.db], ignore_index=True)
                         
                         st.session_state.pending_study_time = 0
                         st.session_state.unsaved_count = 0
                         st.session_state.unsaved_answers = False
                         st.toast("💾 5問分のデータを自動セーブしました！")
                     except Exception as e:
-                        handle_api_error(e) # 🌟 429エラー対策
+                        handle_api_error(e) 
 
                 st.session_state.test_pool.pop(0)
                 st.rerun()
