@@ -1,5 +1,7 @@
 #　429エラー対策、DBアクセス最適化
 
+#　429エラー対策、DBアクセス最適化
+
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
@@ -972,7 +974,6 @@ if mode_select == "分析ダッシュボード":
     except Exception as e:
         handle_api_error(e)
 
-    st.divider()
     st.subheader("🚩 メンバー別 単元別スコア・ワースト7")
     cols = st.columns(len(USER_CONFIG.keys()))
     for idx, user in enumerate(USER_CONFIG.keys()):
@@ -987,30 +988,30 @@ if mode_select == "分析ダッシュボード":
                 u_df['level_num'] = pd.to_numeric(u_df['level'], errors='coerce').fillna(0)
                 u_df['is_done'] = u_df['last_date'].astype(str).str.contains("-", na=False)
                 
-                # 🌟 「分野」と「単元」のセットごとに「合計点数」と「着手した問題数」を集計
-                u_res = u_df.groupby(['field', '単元']).agg(
-                    total_score=('level_num', 'sum'),
-                    done_q=('is_done', 'sum')
-                ).reset_index()
+                # 🌟 【修正点】着手済みの問題「だけ」に絞り込む（未着手の幽霊スコアを排除！）
+                done_df = u_df[u_df['is_done']].copy()
                 
-                # 着手済みの単元だけに絞る
-                u_res = u_res[u_res['done_q'] > 0].copy()
-                
-                if not u_res.empty:
-                    # 定義：(合計獲得点数) / (着手数 * 5点満点) * 100
-                    u_res['達成率'] = (u_res['total_score'] / (u_res['done_q'] * 5) * 100).round(1)
+                if not done_df.empty:
+                    # 着手済みのデータだけで、平均点と問題数を集計
+                    u_res = done_df.groupby(['field', '単元']).agg(
+                        done_q=('level_num', 'count'),  # 解いた問題数
+                        avg_score=('level_num', 'mean') # 平均点（絶対に5以下になる）
+                    ).reset_index()
+                    
+                    # 達成率の計算（平均点 ÷ 5点満点 × 100）
+                    u_res['達成率'] = (u_res['avg_score'] / 5.0 * 100).round(1)
                     
                     # 達成率が低い順（昇順）にソートし、最大7件に制限
                     worst_ranking = u_res.sort_values('達成率', ascending=True).head(7)
                     
                     for r in worst_ranking.itertuples():
-                        # ご指定の条件で色分け（分野名と単元名を両方表示）
+                        # ご指定の条件で色分け
                         if r.達成率 <= 50:
-                            st.error(f"🔴 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                            st.error(f"🔴 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.avg_score:.1f}点)")
                         elif r.達成率 >= 70:
-                            st.success(f"🟢 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                            st.success(f"🟢 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.avg_score:.1f}点)")
                         else:
-                            st.warning(f"🟡 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.total_score/r.done_q:.1f}点)")
+                            st.warning(f"🟡 {r.field}：{r.単元}\n({r.達成率}% : 平均{r.avg_score:.1f}点)")
                 else:
                     st.info("着手済みの問題がありません")
             else:
