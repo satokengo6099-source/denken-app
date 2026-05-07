@@ -835,69 +835,93 @@ if mode_select == "分析ダッシュボード":
     else:
         st.info("学習時間の記録がまだありません。")
 
-    # --- 🌟 ここから個人ダッシュボード（単元別タブ対応） ---
+    # --- 🌟 ここから個人(管理者)ダッシュボード（単元別タブ対応） ---
     st.divider()
-    st.header(f"👤 {current_user} 専用ダッシュボード")
-    st.caption("※このデータはあなたしか見ることができません。")
-
-    st.subheader("🎯 分野・単元別の正解率（理解度）")
-    user_db = full_df_ana[full_df_ana['user'] == current_user].copy()
-    attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
-
-    if not attempted.empty:
-        attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
-        attempted['accuracy'] = (attempted['level'] / 5.0) * 100
-        col_p1, col_p2 = st.columns(2)
-        
-        with col_p1:
-            st.markdown("##### 📚 分野別の理解度")
-            field_acc = attempted.groupby('field')['accuracy'].mean().reset_index()
-            chart_field = alt.Chart(field_acc).mark_bar(opacity=0.8).encode(
-                x=alt.X('field', title='分野'),
-                y=alt.Y('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                color=alt.Color('field', legend=None, scale=alt.Scale(scheme='set2')),
-                tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-            ).properties(height=300)
-            st.altair_chart(chart_field, use_container_width=True)
-            
-        with col_p2:
-            st.markdown("##### 📖 分野ごとの単元別理解度")
-            attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
-            
-            unique_fields = list(attempted['field'].unique())
-            if unique_fields:
-                tabs = st.tabs(unique_fields)
-                
-                for idx, field_name in enumerate(unique_fields):
-                    with tabs[idx]:
-                        field_data = attempted[attempted['field'] == field_name]
-                        unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
-                        
-                        chart_height = max(200, len(unit_acc) * 40)
-                        
-                        chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
-                            x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
-                            y=alt.Y('unit', title='単元', sort='-x'),
-                            color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
-                            tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
-                        ).properties(height=chart_height)
-                        st.altair_chart(chart_unit, use_container_width=True)
+    
+    # 🌟 「佐藤」なら全員分、それ以外なら自分だけのリストを作る
+    if current_user == "佐藤":
+        st.header("👑 管理者(佐藤)用：全ユーザーダッシュボード")
+        st.caption("※佐藤さんにのみ、全メンバーの詳細データが表示されています。")
+        display_users = list(USER_CONFIG.keys())
     else:
-        st.info("解答データがありません。")
+        st.header(f"👤 {current_user} 専用ダッシュボード")
+        st.caption("※このデータはあなたしか見ることができません。")
+        display_users = [current_user]
 
-    st.subheader("⏱️ 分野別の学習時間 (累計)")
-    if not time_df.empty:
-        user_time = time_df[time_df['user'] == current_user].copy()
-        if not user_time.empty:
-            field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
-            field_time = field_time[field_time['study_minutes'] > 0]
-            if not field_time.empty:
-                chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
-                    theta=alt.Theta(field="study_minutes", type="quantitative"),
-                    color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
-                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+    # リストに入っているユーザーの数だけ、グラフを繰り返し生成する
+    for u in display_users:
+        if current_user == "佐藤":
+            st.markdown(f"### ▶ {u} さんのデータ")
+            
+        st.subheader(f"🎯 分野・単元別の正解率（理解度）{ ' - ' + u if current_user == '佐藤' else ''}")
+        user_db = full_df_ana[full_df_ana['user'] == u].copy()
+        attempted = user_db[user_db['last_date'].astype(str).str.contains("-", na=False)].copy()
+
+        if not attempted.empty:
+            attempted['level'] = pd.to_numeric(attempted['level'], errors='coerce').fillna(0)
+            attempted['accuracy'] = (attempted['level'] / 5.0) * 100
+            col_p1, col_p2 = st.columns(2)
+            
+            with col_p1:
+                st.markdown("##### 📚 分野別の理解度")
+                field_acc = attempted.groupby('field')['accuracy'].mean().reset_index()
+                chart_field = alt.Chart(field_acc).mark_bar(opacity=0.8).encode(
+                    x=alt.X('field', title='分野'),
+                    y=alt.Y('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                    color=alt.Color('field', legend=None, scale=alt.Scale(scheme='set2')),
+                    tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
                 ).properties(height=300)
-                st.altair_chart(chart_time, use_container_width=True)
+                st.altair_chart(chart_field, use_container_width=True)
+                
+            with col_p2:
+                st.markdown("##### 📖 分野ごとの単元別理解度")
+                attempted['unit'] = attempted['q_num'].apply(lambda x: str(x).split('No')[0] if 'No' in str(x) else str(x))
+                
+                unique_fields = list(attempted['field'].unique())
+                if unique_fields:
+                    tabs = st.tabs(unique_fields)
+                    
+                    for idx, field_name in enumerate(unique_fields):
+                        with tabs[idx]:
+                            field_data = attempted[attempted['field'] == field_name]
+                            unit_acc = field_data.groupby('unit')['accuracy'].mean().reset_index()
+                            
+                            chart_height = max(200, len(unit_acc) * 40)
+                            
+                            chart_unit = alt.Chart(unit_acc).mark_bar(opacity=0.8).encode(
+                                x=alt.X('accuracy', title='理解度 (%)', scale=alt.Scale(domain=[0, 100])),
+                                y=alt.Y('unit', title='単元', sort='-x'),
+                                color=alt.Color('unit', legend=None, scale=alt.Scale(scheme='set3')),
+                                tooltip=[alt.Tooltip('unit', title='単元'), alt.Tooltip('accuracy', title='理解度(%)', format='.1f')]
+                            ).properties(height=chart_height)
+                            st.altair_chart(chart_unit, use_container_width=True)
+        else:
+            st.info(f"{u} さんの解答データがありません。")
+
+        st.subheader(f"⏱️ 分野別の学習時間 (累計){ ' - ' + u if current_user == '佐藤' else ''}")
+        if not time_df.empty:
+            user_time = time_df[time_df['user'] == u].copy()
+            if not user_time.empty:
+                field_time = user_time.groupby('field')['study_minutes'].sum().reset_index()
+                field_time = field_time[field_time['study_minutes'] > 0]
+                if not field_time.empty:
+                    chart_time = alt.Chart(field_time).mark_arc(innerRadius=50).encode(
+                        theta=alt.Theta(field="study_minutes", type="quantitative"),
+                        color=alt.Color(field="field", type="nominal", title="分野", scale=alt.Scale(scheme='pastel1')),
+                        tooltip=[alt.Tooltip('field', title='分野'), alt.Tooltip('study_minutes', title='学習時間(分)', format='.1f')]
+                    ).properties(height=300)
+                    st.altair_chart(chart_time, use_container_width=True)
+                else:
+                    st.info("分野別の学習時間データがありません。")
+            else:
+                st.info("学習時間データがありません。")
+        else:
+            st.info("学習時間データがありません。")
+            
+        # 佐藤さんの場合、次のユーザーグラフとの間に区切り線を入れる
+        if current_user == "佐藤":
+            st.markdown("<br><br>", unsafe_allow_html=True)
+            st.divider()
 
     st.divider()
     st.info(f"💡 {current_user}さんの目標設定")
