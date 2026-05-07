@@ -1,7 +1,5 @@
 #　429エラー対策、DBアクセス最適化
 
-#　429エラー対策、DBアクセス最適化
-
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
@@ -1246,7 +1244,7 @@ elif mode_select in ["学習モード", "復習モード"]:
             st.session_state.test_pool.append(st.session_state.test_pool.pop(0))
             st.rerun()
 
-    # 🌟 B. 進行中のテストがない場合は、それぞれの「準備画面」を表示
+# 🌟 B. 進行中のテストがない場合は、それぞれの「準備画面」を表示
     else:
         if "dash_full_df" not in st.session_state:
             st.session_state.dash_full_df = load_full_data()
@@ -1254,17 +1252,28 @@ elif mode_select in ["学習モード", "復習モード"]:
         # 🌟 【絶対判定フラグ】日付に「- (ハイフン)」が含まれていれば「解いたことがある（着手済み）」
         is_started = st.session_state.db['last_date'].astype(str).str.contains("-", na=False)
 
+        # 🌟 【最適化】USER_CONFIGから「本来のカリキュラム順」を抽出する
+        original_order = []
+        for item in USER_CONFIG[current_user]["structure"]:
+            field_name = str(item[0])
+            if field_name not in original_order:
+                original_order.append(field_name)
+
         # 1️⃣ 学習モードの準備画面（未着手のみ）
         if mode_select == "学習モード":
             st.title(f"⚡ 学習：{current_user}")
             
-            # 🌟 「着手済みではない（~is_started）」データ ＝ 未着手
             unstarted_df = st.session_state.db[~is_started].copy()
 
             if unstarted_df.empty:
                 st.success("🎉 おめでとうございます！すべての問題を一度は解きました。復習モードへ進みましょう！")
             else:
-                field_list = sorted(unstarted_df['field'].unique().tolist())
+                # 🌟 【修正】あいうえお順（sorted）をやめて、本来のリスト順に並び替える
+                available_fields = unstarted_df['field'].unique().tolist()
+                field_list = [f for f in original_order if f in available_fields]
+                # 万が一リストにないイレギュラーな分野名があった場合のお守り
+                field_list += [f for f in available_fields if f not in original_order]
+                
                 field_options = ["すべて"] + field_list
                 selected_field = st.selectbox("学習する分野（科目）を選んでください", field_options, key="learn_field_select")
 
@@ -1272,23 +1281,29 @@ elif mode_select in ["学習モード", "復習モード"]:
 
                 st.info(f"対象： **{selected_field}** （未着手問題：{len(final_pool_df)}問）")
                 
-                # コールバックで確実にスタート
                 st.button("🚀 この内容で学習を開始する", use_container_width=True, on_click=start_test, args=(final_pool_df,))
 
         # 2️⃣ 復習モードの準備画面（着手済み ＆ 5点未満 ＆ 苦手順）
         elif mode_select == "復習モード":
             st.title(f"🔄 復習：{current_user}")
             
-            # 🌟 「着手済みである（is_started）」 かつ 「満点（5点）未満」を抽出
             review_df = st.session_state.db[is_started & (st.session_state.db['level'].astype(int) < 5)].copy()
             
-            # 分野ごとにまとめ、点数が低い順（0点→1点→2点...）にソート
             review_df = review_df.sort_values(by=['field', 'level', 'q_num'], ascending=[True, True, True])
             
             if review_df.empty:
                 st.success("🎉 現在、復習が必要な問題（レベル5未満）はありません！完璧です！")
             else:
-                st.info(f"現在の復習対象: {len(review_df)} 問")
+                # 🌟 【修正】復習モードも本来のリスト順に並び替える
+                available_fields = review_df['field'].unique().tolist()
+                field_list = [f for f in original_order if f in available_fields]
+                field_list += [f for f in available_fields if f not in original_order]
                 
-                # コールバックで確実にスタート
-                st.button("🔥 復習開始", use_container_width=True, on_click=start_test, args=(review_df,))
+                field_options = ["すべて"] + field_list
+                selected_field = st.selectbox("復習する分野（科目）を選んでください", field_options, key="review_field_select")
+
+                final_review_df = review_df if selected_field == "すべて" else review_df[review_df['field'] == selected_field]
+
+                st.info(f"対象： **{selected_field}** （復習対象：{len(final_review_df)}問）")
+                
+                st.button("🔥 この内容で復習開始", use_container_width=True, on_click=start_test, args=(final_review_df,))    
