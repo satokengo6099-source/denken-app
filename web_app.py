@@ -840,7 +840,7 @@ if mode_select == "分析ダッシュボード":
     
     # 🌟 「佐藤」なら全員分、それ以外なら自分だけのリストを作る
     if current_user == "佐藤":
-        st.header("👑 管理者(佐藤)用：全ユーザーダッシュボード")
+        st.header("佐藤用：全ユーザーダッシュボード")
         st.caption("※佐藤さんにのみ、全メンバーの詳細データが表示されています。")
         display_users = list(USER_CONFIG.keys())
     else:
