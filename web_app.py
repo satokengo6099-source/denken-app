@@ -1131,7 +1131,22 @@ elif mode_select in ["学習モード", "復習モード"]:
             
         st.divider()
         
-        col_btn1, col_btn2 = st.columns(2)
+        # 🌟 消えていた機能（問題ジャンプや保存状態テキスト）も復活させつつ、インデントを完璧に修正！
+        col_nav1, col_nav2 = st.columns([2, 2])
+        with col_nav1:
+            q_labels = [f"{i+1}: {q['field']} - {q['q_num']}" for i, q in enumerate(st.session_state.test_pool)]
+            selected_idx = st.selectbox("問題ジャンプ／一括スキップ", range(len(q_labels)), format_func=lambda x: q_labels[x], key="jump_selector")
+            if selected_idx > 0 and st.button("この問題まで一気に飛ばす"):
+                st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
+                st.rerun()
+                
+        with col_nav2:
+            if st.session_state.unsaved_answers:
+                st.markdown(f"<div style='text-align: right; color: red; font-size: 0.8em; font-weight: bold;'>⚠️ 未保存データ({st.session_state.unsaved_count}問) / 5問で自動保存</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='text-align: right; color: green; font-size: 0.8em;'>✅ 全てのデータが保存されています</div>", unsafe_allow_html=True)
+            
+            col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
                 # 🌟 key="save_btn_unique" を追加してIDを固定！
                 if st.button("💾 クラウドに保存", disabled=not st.session_state.unsaved_answers, use_container_width=True, key="save_btn_unique"):
