@@ -840,7 +840,8 @@ if mode_select == "分析ダッシュボード":
     
     # 🌟 「佐藤」なら全員分、それ以外なら自分だけのリストを作る
     if current_user == "佐藤":
-        st.header(" 管理者用：全ユーザーダッシュボード")
+        st.header("👑 管理者(佐藤)用：全ユーザーダッシュボード")
+        st.caption("※佐藤さんにのみ、全メンバーの詳細データが表示されています。")
         display_users = list(USER_CONFIG.keys())
     else:
         st.header(f"👤 {current_user} 専用ダッシュボード")
@@ -1138,67 +1139,38 @@ elif mode_select in ["学習モード", "復習モード"]:
                 st.session_state.test_pool = st.session_state.test_pool[selected_idx:]
                 st.rerun()
                 
-        with col_nav2:
-            if st.session_state.unsaved_answers:
-                st.markdown(f"<div style='text-align: right; color: red; font-size: 0.8em; font-weight: bold;'>⚠️ 未保存データ({st.session_state.unsaved_count}問) / 5問で自動保存</div>", unsafe_allow_html=True)
-            else:
-                st.markdown("<div style='text-align: right; color: green; font-size: 0.8em;'>✅ 全てのデータが保存されています</div>", unsafe_allow_html=True)
-            
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                # 🌟 key="save_btn_unique" を追加してIDを固定！
-                if st.button("💾 クラウドに保存", disabled=not st.session_state.unsaved_answers, use_container_width=True, key="save_btn_unique"):
-                    with st.spinner('データを同期中...'):
-                        curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
-                        if st.session_state.pending_study_time > 0:
-                            update_study_time(current_user, st.session_state.pending_study_time, curr_field)
-                        
-                        if st.session_state.unsaved_answers:
-                            try:
-                                conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
-                                
-                                # 🌟 【最適化】再ダウンロードせず、メモリ上の全体データを直接書き換える！
-                                master = st.session_state.master_df
-                                st.session_state.master_df = pd.concat([master[master['user'] != current_user], st.session_state.db], ignore_index=True)
-                                
-                                st.session_state.pending_study_time = 0
-                                st.session_state.unsaved_count = 0
-                                st.session_state.unsaved_answers = False
-                                st.success("✅ 手動セーブ完了！")
-                                time.sleep(1)
-                                st.rerun()
-                            except Exception as e:
-                                handle_api_error(e)
-
-            with col_btn2:
+        with col_btn2:
                 # 🌟 key="exit_btn_unique" を追加してIDを固定！
                 if st.button("⏹️ 終了して退出", type="primary", use_container_width=True, key="exit_btn_unique"):
-                    with st.spinner('最終データを保存中...'):
+                    with st.spinner('最終データをクラウドに強制保存中...'):
                         curr_field = st.session_state.test_pool[0]['field'] if st.session_state.get("test_pool") else "未分類"
+                        
+                        # 1. 学習時間の保存
                         if st.session_state.pending_study_time > 0:
                             update_study_time(current_user, st.session_state.pending_study_time, curr_field)
                         
-                        if st.session_state.unsaved_answers:
-                            try:
-                                conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
-                                
-                                # 🌟 【最適化】終了時もメモリを更新
-                                master = st.session_state.master_df
-                                st.session_state.master_df = pd.concat([master[master['user'] != current_user], st.session_state.db], ignore_index=True)
-                                
-                            except Exception as e:
-                                handle_api_error(e)
+                        # 2. 【変更】条件を外し、終了時は問答無用で強制的にクラウドへセーブする！
+                        try:
+                            conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
                             
+                            # 🌟 メモリ上の全体データも最新に更新
+                            master = st.session_state.master_df
+                            st.session_state.master_df = pd.concat([master[master['user'] != current_user], st.session_state.db], ignore_index=True)
+                            
+                        except Exception as e:
+                            handle_api_error(e)
+                            
+                    # 3. テスト状態の完全リセット
                     st.session_state.test_pool = []
                     st.session_state.pending_study_time = 0
                     st.session_state.unsaved_count = 0
                     st.session_state.unsaved_answers = False
                     if "last_action_time" in st.session_state:
                         del st.session_state["last_action_time"]
-                    st.success("✅ お疲れ様でした！記録は完全に保存されました。")
+                        
+                    st.success("✅ お疲れ様でした！クラウドへの最終記録が完全に保存されました。")
                     time.sleep(1)
                     st.rerun()
-
             
 
         curr = st.session_state.test_pool[0]
