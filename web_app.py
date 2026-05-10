@@ -392,13 +392,13 @@ def generate_report_message(full_df):
         if done >= 20:
             msg += "💬: 合格確実。この調子で行きましょう。\n"
         elif done >= 1:
-            msg += "💬: 記念受験。その程度で勉強したつもりですか？\n"
+            msg += "💬: ノルマ達成できませんでした。\n"
         else:
             if slack_days >= 3:
                 days_text = f"{slack_days}日連続" if slack_days != 999 else "永遠に"
                 msg += f"💬: かれは敗北者になってしまいました。{days_text}0問({time_str})。。\n"
             else:
-                msg += "💬: 正気ですか？人生ごと不合格です。\n"
+                msg += "💬: 計画性がない人間は合格できません。社会人になってからも、、、\n"
         msg += "-"*10 + "\n"
     
     msg += "※不満なら今すぐ机に向かえ。"
@@ -1229,7 +1229,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                     try:
                         logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
                         if logs[(logs['date'] == today_str) & (logs['user'] == current_user) & (logs['type'] == 'completed')].empty:
-                            msg = f"✅ 【速報】\n{current_user}が本日の目標を突破しました！\n\n彼は自由の身です。まだ終わっていない他のメンバーは、猛烈に自分を恥じなさい。"
+                            msg = f"✅ 【速報】\n{current_user}が本日のノルマを終わらせました。\n\nお疲れ様です。"
                             if send_line_notification(msg):
                                 new_log = pd.DataFrame([[today_str, current_user, "completed"]], columns=["date", "user", "type"])
                                 # 👇 エラー修正箇所1：conn.update が消えていたのを復旧
