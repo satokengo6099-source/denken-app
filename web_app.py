@@ -1322,6 +1322,17 @@ elif mode_select in ["学習モード", "復習モード"]:
             if review_df.empty:
                 st.success("🎉 現在、復習が必要な問題（レベル5未満）はありません！完璧です！")
             else:
+                # 🌟 【修正】ここに警告を入れるのが最も安全で表示も綺麗です
+                if len(review_df) >= 15:
+                    st.error(f"🚨 **警告：復習が溜まっています（現在 全 {len(review_df)} 問）**")
+                    st.markdown("""
+                        <div style="background-color: #ffebee; padding: 15px; border-radius: 10px; border: 1px solid #ffcdd2; color: #b71c1c;">
+                            <b>⚠️ レベル5に到達していない問題が15問以上蓄積しています。</b><br>
+                            新しい問題を進める前に、まずはこれらを優先して解消しましょう！
+                        </div>
+                        <br>
+                    """, unsafe_allow_html=True)
+
                 # 🌟 【修正】復習モードも本来のリスト順に並び替える
                 available_fields = review_df['field'].unique().tolist()
                 field_list = [f for f in original_order if f in available_fields]
@@ -1332,6 +1343,6 @@ elif mode_select in ["学習モード", "復習モード"]:
 
                 final_review_df = review_df if selected_field == "すべて" else review_df[review_df['field'] == selected_field]
 
-                st.info(f"対象： **{selected_field}** （復習対象：{len(final_review_df)}問）")
+                st.info(f"対象： **{selected_field}** （選択中の復習対象：{len(final_review_df)}問）")
                 
-                st.button("🔥 この内容で復習開始", use_container_width=True, on_click=start_test, args=(final_review_df,))    
+                st.button("🔥 この内容で復習開始", use_container_width=True, on_click=start_test, args=(final_review_df,))
