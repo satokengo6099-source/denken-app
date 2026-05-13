@@ -572,6 +572,26 @@ st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
 
 
+st.sidebar.divider()
+st.sidebar.markdown("### ⏱️ 時間カウンター設定")
+if "timer_enabled" not in st.session_state:
+    st.session_state.timer_enabled = False
+if "timer_min" not in st.session_state:
+    st.session_state.timer_min = 2
+if "timer_sec" not in st.session_state:
+    st.session_state.timer_sec = 0
+
+# トグルスイッチでオン/オフ切り替え
+st.session_state.timer_enabled = st.sidebar.toggle("カウンターをオンにする", value=st.session_state.timer_enabled)
+
+if st.session_state.timer_enabled:
+    col_t1, col_t2 = st.sidebar.columns(2)
+    st.session_state.timer_min = col_t1.number_input("分", min_value=0, max_value=60, value=st.session_state.timer_min)
+    st.session_state.timer_sec = col_t2.number_input("秒", min_value=0, max_value=59, value=st.session_state.timer_sec)
+    st.sidebar.caption("※点数ボタンを押すと自動で再スタートします。（通信は発生しません）")
+# 👆 ====== 追加ここまで ====== 👆
+
+
 # 📅 試験日カウントダウンと進捗計算
 # 🌟 本試験の日付（固定）
 EXAM_DATE = datetime(2026, 8, 30).date() 
