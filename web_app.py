@@ -572,24 +572,6 @@ st.sidebar.divider()
 mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
 
 
-st.sidebar.divider()
-st.sidebar.markdown("### ⏱️ 時間カウンター設定")
-if "timer_enabled" not in st.session_state:
-    st.session_state.timer_enabled = False
-if "timer_min" not in st.session_state:
-    st.session_state.timer_min = 2
-if "timer_sec" not in st.session_state:
-    st.session_state.timer_sec = 0
-
-# トグルスイッチでオン/オフ切り替え
-st.session_state.timer_enabled = st.sidebar.toggle("カウンターをオンにする", value=st.session_state.timer_enabled)
-
-if st.session_state.timer_enabled:
-    col_t1, col_t2 = st.sidebar.columns(2)
-    st.session_state.timer_min = col_t1.number_input("分", min_value=0, max_value=60, value=st.session_state.timer_min)
-    st.session_state.timer_sec = col_t2.number_input("秒", min_value=0, max_value=59, value=st.session_state.timer_sec)
-    st.sidebar.caption("※点数ボタンを押すと自動で再スタートします。（通信は発生しません）")
-# 👆 ====== 追加ここまで ====== 👆
 
 
 # 📅 試験日カウントダウンと進捗計算
@@ -1131,7 +1113,7 @@ elif mode_select == mono_label:
 
 # 3️⃣ 学習モード ＆ 復習モードの分岐
 elif mode_select in ["学習モード", "復習モード"]:
-    
+
     # 🌟 コールバック関数：ボタンが押された瞬間に確実にデータをセット（バグ回避用）
     def start_test(pool_df):
         st.session_state.test_pool = pool_df.to_dict('records')
@@ -1140,6 +1122,7 @@ elif mode_select in ["学習モード", "復習モード"]:
         st.session_state.unsaved_count = 0
         st.session_state.unsaved_answers = False
         st.session_state.last_action_time = time.time()
+        st.session_state.timer_running = False # 👈 タイマーのリセット用
 
     # 🌟 A. 進行中のテストがあれば、優先して解答エリアを表示！
     if st.session_state.get("test_pool") and len(st.session_state.test_pool) > 0:
@@ -1218,6 +1201,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                     st.session_state.pending_study_time = 0
                     st.session_state.unsaved_count = 0
                     st.session_state.unsaved_answers = False
+                    st.session_state.timer_running = False
                     if "last_action_time" in st.session_state:
                         del st.session_state["last_action_time"]
                         
@@ -1228,6 +1212,94 @@ elif mode_select in ["学習モード", "復習モード"]:
 
         curr = st.session_state.test_pool[0]
         st.subheader(f"【{curr['field']}】 {curr['q_num']}")
+
+        # 👇 ====== ここから追加：メイン画面用の時間カウンター ====== 👇
+        if "timer_enabled" not in st.session_state: st.session_state.timer_enabled = False
+        if "timer_min" not in st.session_state: st.session_state.timer_min = 2
+        if "timer_sec" not in st.session_state: st.session_state.timer_sec = 0
+
+        st.markdown("##### ⏱️ 時間カウンター")
+        c_tog, c_min, c_sec, c_btn = st.columns([1.5, 1, 1, 2.5])
+        
+        st.session_state.timer_enabled = c_tog.toggle("タイマーON", value=st.session_state.timer_enabled)
+        
+        if st.session_state.timer_enabled:
+            st.session_state.timer_min = c_min.number_input("分", min_value=0, max_value=60, value=st.session_state.timer_min, label_visibility="collapsed")
+            st.session_state.timer_sec = c_sec.number_input("秒", min_value=0, max_value=59, value=st.session_state.timer_sec, label_visibility="collapsed")
+            
+            # まだスタートしていない場合（1問目の初回）
+            if not st.session_state.timer_running:
+                if c_btn.button("▶️ カウントスタート", type="primary", use_container_width=True):
+                    st.session_state.timer_running = True
+                    st.rerun()
+            # スタート中の場合
+            else:
+                if c_btn.button("⏸️ ストップ", use_container_width=True):
+                    st.session_state.timer_running = False
+                    st.rerun()
+                
+                total_sec = st.session_state.timer_min * 60 + st.session_state.timer_sec
+                if total_sec > 0:
+                    timer_html = f"""
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <style>
+                            body {{ margin: 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; }}
+                            #timer {{ font-size: 36px; font-weight: bold; color: #333; background: #fff; padding: 10px 30px; border-radius: 10px; border: 2px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 120px; text-align: center; }}
+                            .urgent {{ color: white !important; background: #d62728 !important; border-color: #d62728 !important; animation: blink 1s infinite; }}
+                            @keyframes blink {{ 50% {{ opacity: 0.8; }} }}
+                        </style>
+                    </head>
+                    <body>
+                        <div id="timer">{st.session_state.timer_min:02d}:{st.session_state.timer_sec:02d}</div>
+                        <script>
+                            var timeLeft = {total_sec};
+                            var display = document.getElementById("timer");
+                            
+                            function playSound() {{
+                                var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                                function beep(time, freq) {{
+                                    var osc = ctx.createOscillator();
+                                    var gainNode = ctx.createGain();
+                                    osc.connect(gainNode);
+                                    gainNode.connect(ctx.destination);
+                                    osc.type = 'square';
+                                    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+                                    gainNode.gain.setValueAtTime(0.05, ctx.currentTime);
+                                    osc.start(ctx.currentTime + time);
+                                    osc.stop(ctx.currentTime + time + 0.15);
+                                }}
+                                beep(0, 880);   
+                                beep(0.25, 880); 
+                                beep(0.5, 880);  
+                            }}
+
+                            var myTimer = setInterval(function() {{
+                                timeLeft--;
+                                if (timeLeft <= 0) {{
+                                    clearInterval(myTimer);
+                                    display.innerHTML = "Time Up!";
+                                    display.classList.add("urgent");
+                                    playSound();
+                                }} else {{
+                                    var m = Math.floor(timeLeft / 60);
+                                    var s = timeLeft % 60;
+                                    display.innerHTML = (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+                                    if (timeLeft <= 10) {{
+                                        display.style.color = "#d62728"; 
+                                    }}
+                                }}
+                            }}, 1000);
+                        </script>
+                    </body>
+                    </html>
+                    """
+                    import streamlit.components.v1 as components
+                    # 少し上に余白を空けて、中央にデカデカと表示させる
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    components.html(timer_html, height=80)
+        st.divider()
         
         cols = st.columns(6)
         for i in range(6):
