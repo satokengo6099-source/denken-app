@@ -396,12 +396,12 @@ def generate_report_message(full_df):
         else:
             if slack_days >= 3:
                 days_text = f"{slack_days}日連続" if slack_days != 999 else "永遠に"
-                msg += f"💬: かれは敗北者になってしまいました。{days_text}0問({time_str})。。\n"
+                msg += f"💬: {days_text}0問({time_str})。。\n"
             else:
-                msg += "💬: 計画性がない人間は合格できません。社会人になってからも、、、\n"
+                msg += "💬: ノルマ未達成\n"
         msg += "-"*10 + "\n"
     
-    msg += "※不満なら今すぐ机に向かえ。"
+
     return msg
 
 
