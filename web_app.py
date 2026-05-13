@@ -1246,7 +1246,8 @@ elif mode_select in ["学習モード", "復習モード"]:
                     <head>
                         <style>
                             body {{ margin: 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; }}
-                            #timer {{ font-size: 36px; font-weight: bold; color: #333; background: #fff; padding: 10px 30px; border-radius: 10px; border: 2px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 120px; text-align: center; }}
+                            /* 👇 修正点1: widthを広げて、改行させない(white-space: nowrap)設定を追加 */
+                            #timer {{ font-size: 36px; font-weight: bold; color: #333; background: #fff; padding: 10px 20px; border-radius: 10px; border: 2px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.1); min-width: 160px; text-align: center; white-space: nowrap; }}
                             .urgent {{ color: white !important; background: #d62728 !important; border-color: #d62728 !important; animation: blink 1s infinite; }}
                             @keyframes blink {{ 50% {{ opacity: 0.8; }} }}
                         </style>
@@ -1296,9 +1297,9 @@ elif mode_select in ["学習モード", "復習モード"]:
                     </html>
                     """
                     import streamlit.components.v1 as components
-                    # 少し上に余白を空けて、中央にデカデカと表示させる
                     st.markdown("<br>", unsafe_allow_html=True)
-                    components.html(timer_html, height=80)
+                    # 👇 修正点2: heightを80から100に増やして上下に余裕を持たせる
+                    components.html(timer_html, height=100)
         st.divider()
         
         cols = st.columns(6)
