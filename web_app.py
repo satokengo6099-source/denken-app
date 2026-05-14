@@ -1331,7 +1331,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                 st.session_state.unsaved_answers = True 
                 
                 done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
-                if done_today == 20:
+                if done_today == daily_pace:
                     try:
                         logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
                         if logs[(logs['date'] == today_str) & (logs['user'] == current_user) & (logs['type'] == 'completed')].empty:
