@@ -1213,94 +1213,76 @@ elif mode_select in ["学習モード", "復習モード"]:
         curr = st.session_state.test_pool[0]
         st.subheader(f"【{curr['field']}】 {curr['q_num']}")
 
-        # 👇 ====== ここから追加：メイン画面用の時間カウンター ====== 👇
-        if "timer_enabled" not in st.session_state: st.session_state.timer_enabled = False
-        if "timer_min" not in st.session_state: st.session_state.timer_min = 2
-        if "timer_sec" not in st.session_state: st.session_state.timer_sec = 0
 
-        st.markdown("##### ⏱️ 時間カウンター")
-        c_tog, c_min, c_sec, c_btn = st.columns([1.5, 1, 1, 2.5])
-        
-        st.session_state.timer_enabled = c_tog.toggle("タイマーON", value=st.session_state.timer_enabled)
-        
+        # 👇 ====== ここから追加：フロントエンド完結型タイマー ====== 👇
         if st.session_state.timer_enabled:
-            st.session_state.timer_min = c_min.number_input("分", min_value=0, max_value=60, value=st.session_state.timer_min, label_visibility="collapsed")
-            st.session_state.timer_sec = c_sec.number_input("秒", min_value=0, max_value=59, value=st.session_state.timer_sec, label_visibility="collapsed")
-            
-            # まだスタートしていない場合（1問目の初回）
-            if not st.session_state.timer_running:
-                if c_btn.button("▶️ カウントスタート", type="primary", use_container_width=True):
-                    st.session_state.timer_running = True
-                    st.rerun()
-            # スタート中の場合
-            else:
-                if c_btn.button("⏸️ ストップ", use_container_width=True):
-                    st.session_state.timer_running = False
-                    st.rerun()
-                
-                total_sec = st.session_state.timer_min * 60 + st.session_state.timer_sec
-                if total_sec > 0:
-                    timer_html = f"""
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <style>
-                            body {{ margin: 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; }}
-                            /* 👇 修正点1: widthを広げて、改行させない(white-space: nowrap)設定を追加 */
-                            #timer {{ font-size: 36px; font-weight: bold; color: #333; background: #fff; padding: 10px 20px; border-radius: 10px; border: 2px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.1); min-width: 160px; text-align: center; white-space: nowrap; }}
-                            .urgent {{ color: white !important; background: #d62728 !important; border-color: #d62728 !important; animation: blink 1s infinite; }}
-                            @keyframes blink {{ 50% {{ opacity: 0.8; }} }}
-                        </style>
-                    </head>
-                    <body>
-                        <div id="timer">{st.session_state.timer_min:02d}:{st.session_state.timer_sec:02d}</div>
-                        <script>
-                            var timeLeft = {total_sec};
-                            var display = document.getElementById("timer");
-                            
-                            function playSound() {{
-                                var ctx = new (window.AudioContext || window.webkitAudioContext)();
-                                function beep(time, freq) {{
-                                    var osc = ctx.createOscillator();
-                                    var gainNode = ctx.createGain();
-                                    osc.connect(gainNode);
-                                    gainNode.connect(ctx.destination);
-                                    osc.type = 'square';
-                                    osc.frequency.setValueAtTime(freq, ctx.currentTime);
-                                    gainNode.gain.setValueAtTime(0.05, ctx.currentTime);
-                                    osc.start(ctx.currentTime + time);
-                                    osc.stop(ctx.currentTime + time + 0.15);
-                                }}
-                                beep(0, 880);   
-                                beep(0.25, 880); 
-                                beep(0.5, 880);  
+            total_sec = st.session_state.timer_min * 60 + st.session_state.timer_sec
+            if total_sec > 0:
+                # JavaScriptを使ってブラウザ側だけでカウントダウン＆音を鳴らす（429エラー完全回避）
+                timer_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body {{ margin: 0; display: flex; align-items: center; font-family: sans-serif; }}
+                        #timer {{ font-size: 32px; font-weight: bold; color: #1f77b4; background: #f0f2f6; padding: 5px 20px; border-radius: 8px; border: 2px solid #1f77b4; display: inline-block; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);}}
+                        .urgent {{ color: white !important; background: #d62728 !important; border-color: #d62728 !important; animation: blink 1s infinite; }}
+                        @keyframes blink {{ 50% {{ opacity: 0.8; }} }}
+                    </style>
+                </head>
+                <body>
+                    <div id="timer">{st.session_state.timer_min:02d}:{st.session_state.timer_sec:02d}</div>
+                    <script>
+                        var timeLeft = {total_sec};
+                        var display = document.getElementById("timer");
+                        
+                        // ブラウザのWeb Audio APIを利用して電子音を生成する（外部ファイル通信不要）
+                        function playSound() {{
+                            var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                            function beep(time, freq) {{
+                                var osc = ctx.createOscillator();
+                                var gainNode = ctx.createGain();
+                                osc.connect(gainNode);
+                                gainNode.connect(ctx.destination);
+                                osc.type = 'sine';
+                                osc.frequency.setValueAtTime(freq, ctx.currentTime);
+                                gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+                                osc.start(ctx.currentTime + time);
+                                osc.stop(ctx.currentTime + time + 0.15);
                             }}
+                            // ピッ・ピッ・ピッ と3回鳴らす
+                            beep(0, 880);   
+                            beep(0.25, 880); 
+                            beep(0.5, 880);  
+                        }}
 
-                            var myTimer = setInterval(function() {{
-                                timeLeft--;
-                                if (timeLeft <= 0) {{
-                                    clearInterval(myTimer);
-                                    display.innerHTML = "Time Up!";
-                                    display.classList.add("urgent");
-                                    playSound();
-                                }} else {{
-                                    var m = Math.floor(timeLeft / 60);
-                                    var s = timeLeft % 60;
-                                    display.innerHTML = (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
-                                    if (timeLeft <= 10) {{
-                                        display.style.color = "#d62728"; 
-                                    }}
+                        var myTimer = setInterval(function() {{
+                            timeLeft--;
+                            if (timeLeft <= 0) {{
+                                clearInterval(myTimer);
+                                display.innerHTML = "Time Up!";
+                                display.classList.add("urgent");
+                                playSound();
+                            }} else {{
+                                var m = Math.floor(timeLeft / 60);
+                                var s = timeLeft % 60;
+                                display.innerHTML = (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+                                if (timeLeft <= 10) {{
+                                    display.style.color = "#d62728"; // 残り10秒で赤文字に警告
                                 }}
-                            }}, 1000);
-                        </script>
-                    </body>
-                    </html>
-                    """
-                    import streamlit.components.v1 as components
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    # 👇 修正点2: heightを80から100に増やして上下に余裕を持たせる
-                    components.html(timer_html, height=100)
-        st.divider()
+                            }}
+                        }}, 1000);
+                    </script>
+                </body>
+                </html>
+                """
+                import streamlit.components.v1 as components
+                components.html(timer_html, height=70)
+        # 👆 ====== 追加ここまで ====== 👆
+
+
+
+        
         
         cols = st.columns(6)
         for i in range(6):
