@@ -71,41 +71,33 @@ def send_line_notification(message):
         return False
 
 
-# 🌟 学習時間を記録する関数（分野別・重複防止・キャッシュ対策版）
+# 🌟 学習時間を記録する関数（メモリ一元管理・完全ノー通信版）
 def update_study_time(current_user, elapsed_seconds, field="未分類"):
     if elapsed_seconds <= 0: return
     try:
-        # 強制的に最新の状態を読み込む (ttl=10)
-        df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=10)
+        # 変更: 通信せず、メモリ(session_state)から直接読み込む
+        df = st.session_state.study_time_df.copy()
         today_str = datetime.today().strftime('%Y-%m-%d')
         
-        # 文字列として扱い、空欄を「未分類」で埋める（エラー防止）
-        if 'field' not in df.columns:
-            df['field'] = "未分類"
+        if 'field' not in df.columns: df['field'] = "未分類"
         df['field'] = df['field'].fillna("未分類").astype(str)
         df['user'] = df['user'].astype(str)
         df['date'] = df['date'].astype(str)
         
-        # 🌟 ここが重要：ユーザー、日付、さらに「分野」が【すべて一致】する行があるか探す
         mask = (df['user'] == str(current_user)) & (df['date'] == today_str) & (df['field'] == str(field))
         
         if mask.any():
-            # 一致する行（同じユーザー・同じ日・同じ分野）があれば、その行に加算
             idx = df[mask].index[0]
             current_sec = pd.to_numeric(df.loc[idx, 'study_seconds'], errors='coerce')
             if pd.isna(current_sec): current_sec = 0
             df.loc[idx, 'study_seconds'] = int(current_sec + elapsed_seconds)
         else:
-            # 一致する行がなければ（新しい分野なら）、新しい行を一番下に追加
-            new_row = pd.DataFrame([{
-                'user': str(current_user), 
-                'date': today_str, 
-                'study_seconds': int(elapsed_seconds), 
-                'field': str(field)
-            }])
+            new_row = pd.DataFrame([{'user': str(current_user), 'date': today_str, 'study_seconds': int(elapsed_seconds), 'field': str(field)}])
             df = pd.concat([df, new_row], ignore_index=True)
             
+        # データベースを更新し、メモリ内のデータも最新に上書きする！
         conn.update(spreadsheet=target_url, worksheet="StudyTime", data=df)
+        st.session_state.study_time_df = df
     except Exception as e:
         handle_api_error(e)
 
@@ -332,12 +324,12 @@ def generate_report_message(full_df):
     yesterday_str = yesterday_dt.strftime('%Y-%m-%d')
     
     try:
-        h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=60)
+        h_df = st.session_state.holidays_df.copy()
     except:
         h_df = pd.DataFrame(columns=['user', 'holiday_date'])
 
     try:
-        time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=60)
+        time_df = st.session_state.study_time_df.copy()
         time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
     except:
         time_df = pd.DataFrame(columns=['user', 'date', 'study_seconds'])
@@ -439,7 +431,7 @@ def check_and_trigger_report():
     if now_hour >= 20 and not st.session_state.get("warning_checked", False):
         try:
             try:
-                logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=1200)
+                logs = st.session_state.task_logs_df.copy()
                 if 'date' not in logs.columns:
                     logs = pd.DataFrame(columns=['date', 'user', 'type'])
             except:
@@ -452,12 +444,12 @@ def check_and_trigger_report():
                 
                 # 各ユーザーの目標期日を読み込む
                 try:
-                    goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=600)
+                    goal_df = st.session_state.goal_dates_df.copy()
                 except:
                     goal_df = pd.DataFrame(columns=['user', 'goal_date'])
 
                 try:
-                    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
+                    h_df = st.session_state.holidays_df.copy()
                     if 'user' not in h_df.columns:
                         h_df = pd.DataFrame(columns=['user', 'holiday_date'])
                 except:
@@ -511,6 +503,7 @@ def check_and_trigger_report():
                         new_log = pd.DataFrame([[today_str, "system", "20h_warning"]], columns=["date", "user", "type"])
                         updated_logs = pd.concat([logs, new_log], ignore_index=True)
                         conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
+                        st.session_state.task_logs_df = updated_logs  # 👈 この1行を追加！
         except Exception as e:
             st.error(f"20時警告エラー: {e}")
 
@@ -520,8 +513,8 @@ def check_and_trigger_report():
 def check_unread_monologue(current_user):
     """独り言掲示板の未読があるかチェック"""
     try:
-        mono_df = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=1300)
-        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=1000)
+        mono_df = st.session_state.monologues_df.copy()
+        status_df = st.session_state.read_status_df.copy()
         
         user_status = status_df[status_df['user'] == current_user]
         if user_status.empty or mono_df.empty:
@@ -538,18 +531,35 @@ def check_unread_monologue(current_user):
     except:
         return False
 
-# ==========================================
-# 👇 ここから「5. メニュー切り替え」に続く
-# ==========================================
-
 # --- 5. メニュー切り替えとサイドバー（通知・進捗） ---
 
-# 🌟 アプリ起動時（ブラウザを開いた瞬間）に「1回だけ」全データを読み込み、メモリに永続化する
-if "master_df" not in st.session_state:
-    with st.spinner("データベースから最新のデータを取得しています..."):
+# 🌟 アプリ起動時に「1回だけ」全データを読み込み、メモリに永続化する
+if "data_initialized" not in st.session_state:
+    with st.spinner("データベースを初期化しています...（初回のみ）"):
         st.session_state.master_df = load_full_data()
+        
+        # 👇 429対策：他の全シートも1回だけ読み込んでメモリに保存する（ttlは使わない）
+        def safe_read(sheet_name, columns):
+            try:
+                # ttlを指定しないことで、純粋な1回限りの読み込みにする
+                df = conn.read(spreadsheet=target_url, worksheet=sheet_name)
+                return df if not df.empty else pd.DataFrame(columns=columns)
+            except:
+                return pd.DataFrame(columns=columns)
 
+        st.session_state.study_time_df = safe_read("StudyTime", ['user', 'date', 'study_seconds', 'field'])
+        st.session_state.holidays_df = safe_read("Holidays", ['user', 'holiday_date'])
+        st.session_state.goal_dates_df = safe_read("GoalDates", ['user', 'goal_date'])
+        st.session_state.task_logs_df = safe_read("TaskLogs", ['date', 'user', 'type'])
+        st.session_state.monologues_df = safe_read("Monologues", ["date", "user", "content", "file_name"])
+        st.session_state.read_status_df = safe_read("ReadStatus", ['user', 'last_read_at'])
+        
+        st.session_state.data_initialized = True
+
+# 👇 この下の st.sidebar.title... はそのまま残ります
 st.sidebar.title("⚡ 電験学習管理システム")
+
+
 
 # 🌟 1. 【復活】ここでユーザーを選択・決定する！
 current_user = st.sidebar.selectbox("👤 ユーザーを選択", list(USER_CONFIG.keys()))
@@ -583,7 +593,7 @@ import math # 👈 自動計算の切り上げ(ceil)に使うため追加
 
 # --- 🎯 1. 個人の目標期日をスプレッドシートから取得 ---
 try:
-    goal_df_sidebar = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=60)
+    goal_df_sidebar = goal_df = st.session_state.goal_dates_df.copy()
     user_goal_row = goal_df_sidebar[goal_df_sidebar['user'] == current_user]
     
     if not user_goal_row.empty:
@@ -596,7 +606,7 @@ except:
 
 # --- 📅 2. 休日を除いた「実質残り日数」の計算 と 休日LINE通知 ---
 try:
-    h_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=1200)
+    h_df = st.session_state.holidays_df.copy()
     my_h_list = h_df[h_df['user'] == current_user]['holiday_date'].tolist()
     
     # 今日から目標期日までの全日程
@@ -617,7 +627,7 @@ try:
             
             try:
                 # 🌟 【対策2】ttl=600に戻して、Googleのアクセス制限（APIリミット）を回避！
-                logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
+                logs = st.session_state.task_logs_df.copy()
                 
                 if 'date' not in logs.columns:
                     logs = pd.DataFrame(columns=['date', 'user', 'type'])
@@ -697,7 +707,7 @@ if mode_select == "分析ダッシュボード":
     full_df_ana = st.session_state.master_df.copy()
     
     try:
-        time_df = conn.read(spreadsheet=target_url, worksheet="StudyTime", ttl=600)
+        time_df = st.session_state.study_time_df.copy()
         time_df['study_seconds'] = pd.to_numeric(time_df['study_seconds'], errors='coerce').fillna(0)
         time_df['study_minutes'] = time_df['study_seconds'] / 60.0
         if 'field' not in time_df.columns: time_df['field'] = '未分類'
@@ -928,13 +938,14 @@ if mode_select == "分析ダッシュボード":
     st.divider()
     st.info(f"💡 {current_user}さんの目標設定")
     try:
-        goal_df = conn.read(spreadsheet=target_url, worksheet="GoalDates", ttl=600)
+        goal_df = st.session_state.goal_dates_df.copy()
         my_goal_row = goal_df[goal_df['user'] == current_user]
         default_date = datetime.today() + timedelta(days=115)
         if not my_goal_row.empty:
             current_goal_str = my_goal_row.iloc[0]['goal_date']
             default_date = datetime.strptime(current_goal_str, '%Y-%m-%d')
         new_goal = st.date_input("個人の目標期日を変更する", default_date, key="goal_date_input")
+        
         if st.button("目標期日を更新する", key="goal_btn"):
             new_goal_str = new_goal.strftime('%Y-%m-%d')
             if not my_goal_row.empty:
@@ -943,17 +954,24 @@ if mode_select == "分析ダッシュボード":
             else:
                 new_row = pd.DataFrame([{'user': current_user, 'goal_date': new_goal_str}])
                 goal_df = pd.concat([goal_df, new_row], ignore_index=True)
+            
             conn.update(spreadsheet=target_url, worksheet="GoalDates", data=goal_df)
+            st.session_state.goal_dates_df = goal_df  # 👈 修正：メモリも更新する！
+            
             st.success(f"目標期日を {new_goal_str} に更新しました！")
             time.sleep(1)
             st.rerun()
+            
     except Exception as e:
         handle_api_error(e)
+
+
+        
 
     st.divider()
     st.info(f"📅 {current_user}さんの休日（勉強しない日）設定")
     try:
-        holiday_df = conn.read(spreadsheet=target_url, worksheet="Holidays", ttl=600)
+        holiday_df = st.session_state.holidays_df.copy()
         if 'user' not in holiday_df.columns:
             holiday_df = pd.DataFrame(columns=['user', 'holiday_date'])
         my_holidays = sorted(list(set(holiday_df[holiday_df['user'] == current_user]['holiday_date'].dropna().tolist())))
@@ -975,7 +993,12 @@ if mode_select == "分析ダッシュボード":
                     updated_holidays = sorted(list(set(my_holidays + new_dates)))
                     other_users_holidays = holiday_df[holiday_df['user'] != current_user]
                     new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
-                    conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
+                    
+                    # 👇 修正： updated_h_df を作ってから保存するように直しました
+                    updated_h_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
+                    conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_h_df)
+                    st.session_state.holidays_df = updated_h_df
+                    
                     st.success(f"{len(new_dates)}日分追加しました！")
                     time.sleep(1)
                     st.rerun()
@@ -989,7 +1012,12 @@ if mode_select == "分析ダッシュボード":
                         updated_holidays = [d for d in my_holidays if d not in to_remove]
                         other_users_holidays = holiday_df[holiday_df['user'] != current_user]
                         new_my_holidays = pd.DataFrame({'user': [current_user] * len(updated_holidays), 'holiday_date': updated_holidays})
-                        conn.update(spreadsheet=target_url, worksheet="Holidays", data=pd.concat([other_users_holidays, new_my_holidays], ignore_index=True))
+                        
+                        # 👇 修正： こちらも updated_h_df を作ってから保存するように直しました
+                        updated_h_df = pd.concat([other_users_holidays, new_my_holidays], ignore_index=True)
+                        conn.update(spreadsheet=target_url, worksheet="Holidays", data=updated_h_df)
+                        st.session_state.holidays_df = updated_h_df
+                        
                         st.success("休日を取り消しました！")
                         time.sleep(1)
                         st.rerun()
@@ -1047,9 +1075,10 @@ if mode_select == "分析ダッシュボード":
 elif mode_select == mono_label:
     st.title(f"📝 {mono_label.replace(' 🔴', '')}")
     try:
-        status_df = conn.read(spreadsheet=target_url, worksheet="ReadStatus", ttl=60)
+        status_df = st.session_state.read_status_df.copy()
         status_df.loc[status_df['user'] == current_user, 'last_read_at'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
         conn.update(spreadsheet=target_url, worksheet="ReadStatus", data=status_df)
+        st.session_state.read_status_df = status_df  # 👈 修正：メモリも更新！
     except: pass
 
     with st.expander("💬 独り言（メモ・わからない問題）を投稿する"):
@@ -1068,9 +1097,11 @@ elif mode_select == mono_label:
                 
                 new_mono = pd.DataFrame([[datetime.today().strftime('%Y-%m-%d %H:%M:%S'), current_user, note_content, f_name]], columns=["date", "user", "content", "file_name"])
                 try:
-                    old_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
-                    updated_mono = pd.concat([old_mono, new_mono], ignore_index=True)
+                    mono_df = st.session_state.monologues_df.copy()
+                    # 👇 修正：old_mono という存在しない変数名をやめました
+                    updated_mono = pd.concat([mono_df, new_mono], ignore_index=True)
                     conn.update(spreadsheet=target_url, worksheet="Monologues", data=updated_mono)
+                    st.session_state.monologues_df = updated_mono  # 👈 修正：メモリも更新！
                     
                     line_msg = f"💬 【新着：独り言】\n{current_user}さんが新しいメッセージを投稿しました。\n\n内容：\n{note_content[:50]}{'...' if len(note_content) > 50 else ''}"
                     send_line_notification(line_msg)
@@ -1083,7 +1114,7 @@ elif mode_select == mono_label:
 
     st.divider()
     try:
-        display_mono = conn.read(spreadsheet=target_url, worksheet="Monologues", ttl=60)
+        display_mono = mono_df = st.session_state.monologues_df.copy()
         if not display_mono.empty:
             display_mono.columns = display_mono.columns.str.strip()
             display_mono['date_sort'] = pd.to_datetime(display_mono['date'], errors='coerce')
@@ -1331,15 +1362,20 @@ elif mode_select in ["学習モード", "復習モード"]:
                 st.session_state.unsaved_answers = True 
                 
                 done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
+                
                 if done_today == daily_pace:
                     try:
-                        logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=600)
+                        logs = st.session_state.task_logs_df.copy()
+                        # 👇 修正：消えていた「今日すでに送信済みか？」の判定文を復活させ、インデントを直しました
                         if logs[(logs['date'] == today_str) & (logs['user'] == current_user) & (logs['type'] == 'completed')].empty:
                             msg = f"✅ 【速報】\n{current_user}が本日のノルマを終わらせました。\n\nお疲れ様です。"
                             if send_line_notification(msg):
                                 new_log = pd.DataFrame([[today_str, current_user, "completed"]], columns=["date", "user", "type"])
-                                # 👇 エラー修正箇所1：conn.update が消えていたのを復旧
-                                conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=pd.concat([logs, new_log], ignore_index=True))
+                                updated_logs = pd.concat([logs, new_log], ignore_index=True)
+                                
+                                conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
+                                st.session_state.task_logs_df = updated_logs  # 👈 修正：メモリも更新！
+                                
                                 st.toast("🎉 ノルマ達成をLINEで通知しました！")
                     except: pass
 
