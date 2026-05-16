@@ -290,27 +290,42 @@ def load_full_data():
 
             df = df.dropna(how="all", subset=['user', 'q_num'])
             df['level'] = pd.to_numeric(df.get('level', 0), errors='coerce').fillna(0).astype(int)
-            df['last_date'] = df.get('last_date', '').astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
+            
+            df['last_date'] = df.get('last_date', '').fillna('').astype(str).str.strip()
+            df['last_date'] = df['last_date'].replace(['nan', 'None', 'NaN', '<NA>', 'NaT'], '')
+            
+            needs_update = False
             
             # スプレッドシートに first_date 列がない場合のお守り
             if 'first_date' not in df.columns:
                 df['first_date'] = ""
+                needs_update = True
                 
-            df['first_date'] = df['first_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
+            df['first_date'] = df.get('first_date', '').fillna('').astype(str).str.strip()
+            df['first_date'] = df['first_date'].replace(['nan', 'None', 'NaN', '<NA>', 'NaT'], '')
             
             # 🌟 【超重要：過去データの救済 ＆ 今日のノルマ回避】
             mask_empty_first = df['first_date'] == ''
             mask_has_last = df['last_date'] != ''
             
-            # 1. まず過去に解いた問題の first_date に、一旦 last_date をコピーする
-            df.loc[mask_empty_first & mask_has_last, 'first_date'] = df.loc[mask_empty_first & mask_has_last, 'last_date']
-            
-            # 2. その中で「今日」になってしまったものだけを「昨日」に書き換える！（ノルマ誤作動防止）
-            mask_is_today = df['first_date'] == today_str
-            df.loc[mask_empty_first & mask_has_last & mask_is_today, 'first_date'] = yesterday_str
+            if (mask_empty_first & mask_has_last).any():
+                df.loc[mask_empty_first & mask_has_last, 'first_date'] = df.loc[mask_empty_first & mask_has_last, 'last_date']
+                
+                mask_is_today = df['first_date'] == today_str
+                if mask_is_today.any():
+                    df.loc[mask_empty_first & mask_has_last & mask_is_today, 'first_date'] = yesterday_str
+                    
+                needs_update = True
                 
             for col in ['user', 'field', 'q_num']:
                 df[col] = df.get(col, '').astype(str).str.strip()
+                
+            # 🌟 【追加】過去データの修復を行ったら、スプレッドシートを上書き保存する
+            if needs_update:
+                try:
+                    conn.update(spreadsheet=target_url, worksheet=sheet_name, data=df)
+                except Exception as e:
+                    print(f"修復保存エラー: {e}")
                 
             all_dfs.append(df[['user', 'field', 'q_num', 'level', 'last_date', 'first_date']])
             
@@ -346,7 +361,8 @@ def sync_user_data(full_df, user_name):
                     "field": field,
                     "q_num": q_id,
                     "level": 0,
-                    "last_date": ""
+                    "last_date": "",
+                    "first_date": ""  # 👈 🌟ここを追加！
                 })
                 
     if new_rows:
@@ -711,7 +727,8 @@ except Exception as e:
 
 # --- 📊 3. 進捗とノルマの計算 ---
 today_str = today_dt.strftime('%Y-%m-%d')
-done_today_count = len(db[db['last_date'] == today_str])
+# 🌟 復習が混ざらないように「初回学習日(first_date)」で今日のノルマをカウント！
+done_today_count = len(db[db['first_date'] == today_str])
 
 unstarted_list = [q for q in db.to_dict('records') if str(q.get("last_date", "")) in ["", "nan", "None", "NaN"]]
 total_count = len(db)
@@ -1411,19 +1428,32 @@ elif mode_select in ["学習モード", "復習モード"]:
                 st.session_state.last_action_time = time.time() 
                 st.session_state.unsaved_count += 1 
                 
-                st.session_state.history.append({"q_num": curr["q_num"], "field": curr["field"], "old_level": curr.get("level", 0), "old_date": curr.get("last_date", "")})
+                # 🌟 old_first も履歴に保存
+                st.session_state.history.append({
+                    "q_num": curr["q_num"], 
+                    "field": curr["field"], 
+                    "old_level": curr.get("level", 0), 
+                    "old_date": curr.get("last_date", ""),
+                    "old_first": curr.get("first_date", "")
+                })
+                
                 idx = st.session_state.db[(st.session_state.db['q_num'] == curr['q_num']) & (st.session_state.db['field'] == curr['field'])].index
                 
                 today_str = datetime.today().strftime('%Y-%m-%d')
-                st.session_state.db.loc[idx, ['level', 'last_date']] = [i, today_str]
+                
+                # 🌟 ここで first_date を記録する！
+                old_first = curr.get("first_date", "")
+                new_first = today_str if old_first in ["", "nan", "None", "NaN"] else old_first
+                
+                st.session_state.db.loc[idx, ['level', 'last_date', 'first_date']] = [i, today_str, new_first]
                 st.session_state.unsaved_answers = True 
                 
-                done_today = len(st.session_state.db[st.session_state.db['last_date'] == today_str])
+                # 🌟 今日のノルマ判定も first_date で行う！
+                done_today = len(st.session_state.db[st.session_state.db['first_date'] == today_str])
                 
                 if done_today == daily_pace:
                     try:
                         logs = st.session_state.task_logs_df.copy()
-                        # 👇 修正：消えていた「今日すでに送信済みか？」の判定文を復活させ、インデントを直しました
                         if logs[(logs['date'] == today_str) & (logs['user'] == current_user) & (logs['type'] == 'completed')].empty:
                             msg = f"✅ 【速報】\n{current_user}が本日のノルマを終わらせました。\n\nお疲れ様です。"
                             if send_line_notification(msg):
@@ -1431,7 +1461,7 @@ elif mode_select in ["学習モード", "復習モード"]:
                                 updated_logs = pd.concat([logs, new_log], ignore_index=True)
                                 
                                 conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
-                                st.session_state.task_logs_df = updated_logs  # 👈 修正：メモリも更新！
+                                st.session_state.task_logs_df = updated_logs  
                                 
                                 st.toast("🎉 ノルマ達成をLINEで通知しました！")
                     except: pass
@@ -1439,11 +1469,8 @@ elif mode_select in ["学習モード", "復習モード"]:
                 if st.session_state.unsaved_count >= 5:
                     try:
                         update_study_time(current_user, st.session_state.pending_study_time, curr['field'])
-                        
-                        # 👇 エラー修正箇所2：conn.update が消えていたのを復旧
                         conn.update(spreadsheet=target_url, worksheet=f"Sheet_{current_user}", data=st.session_state.db)
                         
-                        # 🌟 【最適化】5問セーブ時もメモリを更新
                         master = st.session_state.master_df
                         st.session_state.master_df = pd.concat([master[master['user'] != current_user], st.session_state.db], ignore_index=True)
                         
@@ -1461,7 +1488,9 @@ elif mode_select in ["学習モード", "復習モード"]:
         if c1.button("↩️ 1つ戻る", disabled=not st.session_state.history, use_container_width=True):
             last = st.session_state.history.pop()
             idx = st.session_state.db[(st.session_state.db['q_num'] == last['q_num']) & (st.session_state.db['field'] == last['field'])].index
-            st.session_state.db.loc[idx, ['level', 'last_date']] = [last['old_level'], last['old_date']]
+            
+            # 🌟 戻る時も first_date を復元する
+            st.session_state.db.loc[idx, ['level', 'last_date', 'first_date']] = [last['old_level'], last['old_date'], last['old_first']]
             st.session_state.test_pool.insert(0, st.session_state.db.loc[idx].to_dict('records')[0])
             st.session_state.unsaved_answers = True 
             st.session_state.unsaved_count = max(0, st.session_state.unsaved_count - 1)
