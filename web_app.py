@@ -275,10 +275,6 @@ def load_full_data():
     """全ユーザーの個別シートを読み込んで結合する（競合防止＆爆速化）"""
     all_dfs = []
     
-    # 🌟 今日の日付と、昨日の日付を取得しておく
-    today_str = datetime.today().strftime('%Y-%m-%d')
-    yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-
     for user in USER_CONFIG.keys():
         try:
             sheet_name = f"Sheet_{user}"
@@ -291,41 +287,19 @@ def load_full_data():
             df = df.dropna(how="all", subset=['user', 'q_num'])
             df['level'] = pd.to_numeric(df.get('level', 0), errors='coerce').fillna(0).astype(int)
             
+            # 文字列のブレ（NaNなど）を排除するクレンジング
             df['last_date'] = df.get('last_date', '').fillna('').astype(str).str.strip()
             df['last_date'] = df['last_date'].replace(['nan', 'None', 'NaN', '<NA>', 'NaT'], '')
-            
-            needs_update = False
             
             # スプレッドシートに first_date 列がない場合のお守り
             if 'first_date' not in df.columns:
                 df['first_date'] = ""
-                needs_update = True
                 
             df['first_date'] = df.get('first_date', '').fillna('').astype(str).str.strip()
             df['first_date'] = df['first_date'].replace(['nan', 'None', 'NaN', '<NA>', 'NaT'], '')
-            
-            # 🌟 【超重要：過去データの救済 ＆ 今日のノルマ回避】
-            mask_empty_first = df['first_date'] == ''
-            mask_has_last = df['last_date'] != ''
-            
-            if (mask_empty_first & mask_has_last).any():
-                df.loc[mask_empty_first & mask_has_last, 'first_date'] = df.loc[mask_empty_first & mask_has_last, 'last_date']
-                
-                mask_is_today = df['first_date'] == today_str
-                if mask_is_today.any():
-                    df.loc[mask_empty_first & mask_has_last & mask_is_today, 'first_date'] = yesterday_str
-                    
-                needs_update = True
                 
             for col in ['user', 'field', 'q_num']:
                 df[col] = df.get(col, '').astype(str).str.strip()
-                
-            # 🌟 【追加】過去データの修復を行ったら、スプレッドシートを上書き保存する
-            if needs_update:
-                try:
-                    conn.update(spreadsheet=target_url, worksheet=sheet_name, data=df)
-                except Exception as e:
-                    print(f"修復保存エラー: {e}")
                 
             all_dfs.append(df[['user', 'field', 'q_num', 'level', 'last_date', 'first_date']])
             
