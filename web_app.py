@@ -174,6 +174,44 @@ USER_CONFIG = {
 # ==========================================
 
 FUTURE_CONFIG = {
+    "佐藤1種用": {
+        "deadline": datetime(2026, 8, 22).date(),
+        "structure": [
+            # ----- 理論 -----
+            ("理論", "電界と電位", 1, 4), ("理論", "静電容量と静電エネルギー", 5, 11), ("理論", "影像法", 12, 15),
+            ("理論", "磁界と磁束密度", 16, 21), ("理論", "インダクタンスと磁気エネルギー", 22, 29),
+            ("理論", "回路の諸定理", 1, 10), ("理論", "三相交流回路", 11, 18), ("理論", "過渡現象", 19, 27), ("理論", "分布定数回路", 18, 31),
+            ("理論", "真空電子理論", 1, 4), ("理論", "pn接合ダイオード", 5, 8), ("理論", "バイポーラトランジスタ", 9, 14),
+            ("理論", "MOS形FET", 15, 19), ("理論", "演算増幅器・負帰還増幅回路・発振回路", 20, 28),
+            ("理論", "電力測定", 1, 6), ("理論", "抵抗・インピーダンス測定", 7, 9), ("理論", "電気・電子応用計測", 10, 14),
+
+            # ----- 機械 -----
+            ("機械", "同期発電機", 1, 11), ("機械", "同期電動機", 12, 15),
+            ("機械", "誘導電動機", 1, 9), ("機械", "誘導発電機", 10, 11), ("機械", "直流機", 12, 12),
+            ("機械", "変圧器", 1, 10), ("機械", "機器", 11, 16),
+            ("機械", "半導体素子", 1, 2), ("機械", "整流回路", 3, 4), ("機械", "チョッパ回路", 6, 6), ("機械", "インバータと応用", 7, 11),
+            ("機械", "電気鉄道", 1, 2), ("機械", "電動機応用", 3, 4),
+            ("機械", "照明の基本的事項と照明計算", 1, 7), ("機械", "光源と特徴", 8, 11), ("機械", "照明設計", 12, 14), ("機械", "電気加熱・加工", 15, 19),
+            ("機械", "電池", 1, 4), ("機械", "燃料電池", 5, 6), ("機械", "電解", 7, 10),
+            ("機械", "自動制御", 1, 2), ("機械", "センサおよびメカトロニクス", 3, 7),
+            ("機械", "コンピュータシステム", 1, 4), ("機械", "ネットワーク", 5, 11),
+
+            # ----- 電力 -----
+            ("電力", "水車の構造と出力", 1, 8), ("電力", "調速機と負荷遮断", 9, 11), ("電力", "揚水発電所", 12, 15),
+            ("電力", "火力発電所の燃料と構造", 1, 10), ("電力", "ガスタービンとコンバインドサイクル発電", 11, 14), ("電力", "火力発電所の運用", 15, 18),
+            ("電力", "原子力発電", 1, 5), ("電力", "再生可能エネルギー", 1, 3),
+            ("電力", "送電系統の等価回路", 1, 2), ("電力", "電力系統における故障", 3, 4), ("電力", "電力系統の安定性", 5, 12),
+            ("電力", "変圧器", 1, 7), ("電力", "開閉設備・調相設備", 8, 12), ("電力", "保護リレー", 13, 19), ("電力", "開閉サージ", 20, 21), ("電力", "変電所の絶縁協調・塩害対策・耐震設計", 22, 28),
+            ("電力", "架空送電", 1, 10), ("電力", "地中送電", 11, 14), ("電力", "直流送電", 15, 16),
+            ("電力", "配電系統", 1, 14), ("電力", "配電線の保護", 15, 17), ("電力", "電気材料", 1, 4),
+
+            # ----- 法規 -----
+            ("法規", "電気事業法・電気事業法施行令・電気事業法施行規則", 1, 19), ("法規", "電気工事士法・電気工事業法・電気用品安全法", 20, 23),
+            ("法規", "絶縁", 1, 2), ("法規", "接地", 3, 7), ("法規", "各種設備の施設", 8, 43),
+            ("法規", "電力需給・周波数と電圧", 1, 15), ("法規", "施設管理全般", 16, 27)
+        ]
+    },
+
     "風穴2種用": {
         "deadline": datetime(2026, 8, 22).date(),
         "structure": [
@@ -236,30 +274,49 @@ target_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 def load_full_data():
     """全ユーザーの個別シートを読み込んで結合する（競合防止＆爆速化）"""
     all_dfs = []
+    
+    # 🌟 今日の日付と、昨日の日付を取得しておく
+    today_str = datetime.today().strftime('%Y-%m-%d')
+    yesterday_str = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+
     for user in USER_CONFIG.keys():
         try:
-            # ユーザーごとの専用シートを読み込む
             sheet_name = f"Sheet_{user}"
-            df = conn.read(spreadsheet=target_url, worksheet=sheet_name, usecols=[0, 1, 2, 3, 4], ttl=600)
+            df = conn.read(spreadsheet=target_url, worksheet=sheet_name, ttl=600)
             
-            # 🌟 データが空（見出しのみ等）だった場合は、空箱を作らずに安全のため「強制停止」させる！
             if df.empty:
-                st.error(f"🚨 警告: 『{sheet_name}』のデータが0件として読み込まれました。誤ったリセット（データ消失）を防ぐため、システムを安全に停止します。少し待ってからリロードしてください。")
+                st.error(f"🚨 警告: 『{sheet_name}』のデータが0件として読み込まれました。誤ったリセットを防ぐためシステムを停止します。")
                 st.stop()
 
-            # データが存在する場合のみ以下の処理を行う
-            df = df.dropna(how="all")
-            df['level'] = pd.to_numeric(df['level'], errors='coerce').fillna(0).astype(int)
-            df['last_date'] = df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
+            df = df.dropna(how="all", subset=['user', 'q_num'])
+            df['level'] = pd.to_numeric(df.get('level', 0), errors='coerce').fillna(0).astype(int)
+            df['last_date'] = df.get('last_date', '').astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
+            
+            # スプレッドシートに first_date 列がない場合のお守り
+            if 'first_date' not in df.columns:
+                df['first_date'] = ""
+                
+            df['first_date'] = df['first_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '')
+            
+            # 🌟 【超重要：過去データの救済 ＆ 今日のノルマ回避】
+            mask_empty_first = df['first_date'] == ''
+            mask_has_last = df['last_date'] != ''
+            
+            # 1. まず過去に解いた問題の first_date に、一旦 last_date をコピーする
+            df.loc[mask_empty_first & mask_has_last, 'first_date'] = df.loc[mask_empty_first & mask_has_last, 'last_date']
+            
+            # 2. その中で「今日」になってしまったものだけを「昨日」に書き換える！（ノルマ誤作動防止）
+            mask_is_today = df['first_date'] == today_str
+            df.loc[mask_empty_first & mask_has_last & mask_is_today, 'first_date'] = yesterday_str
+                
             for col in ['user', 'field', 'q_num']:
-                df[col] = df[col].astype(str).str.strip()
-            all_dfs.append(df)
+                df[col] = df.get(col, '').astype(str).str.strip()
+                
+            all_dfs.append(df[['user', 'field', 'q_num', 'level', 'last_date', 'first_date']])
             
         except Exception as e:
-            # 🌟 エラーが起きた場合は、自動復帰システムに丸投げする！
             handle_api_error(e)
             
-    # 全員のシートが読み込めなかった場合の最終防衛ライン
     if not all_dfs:
         st.error("🚨 致命的なエラー: どのユーザーのデータも読み込めませんでした。データを保護するため停止します。")
         st.stop()
