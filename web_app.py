@@ -451,16 +451,20 @@ def check_and_trigger_report():
     now_hour = now_jst.hour
 
     # --- A. 朝の進捗レポート送信 ---
-    # 🌟 朝のチェックフラグを独立させる
     if not st.session_state.get("morning_checked", False):
+        # 🌟 対策1：通信を行う【前】にフラグを立てて完全ロック！二重起動を防止
+        st.session_state["morning_checked"] = True
+        
         try:
-            sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=600)
+            # 🌟 対策2：ttl=0 に設定！ キャッシュ（記憶）を無視して最新のシートを直接確認！
+            sys_df = conn.read(spreadsheet=target_url, worksheet="System", ttl=0)
             if sys_df.empty or len(sys_df.columns) == 0:
                 st.error("Systemシートが空です！1行目のA列に『last_report_date』と入力してください。")
             else:
                 last_sent = str(sys_df.iloc[0, 0]) if not sys_df.empty else ""
                 
                 if last_sent != today_str:
+                    # 🌟 対策3：LINEを送る【前】にスプレッドシートを更新！
                     conn.update(spreadsheet=target_url, worksheet="System", data=pd.DataFrame([[today_str]], columns=["last_report_date"]))
                     full_df = st.session_state.master_df.copy()
                     report_msg = generate_report_message(full_df)
@@ -468,17 +472,16 @@ def check_and_trigger_report():
                         st.toast("LINEへ進捗レポートを送信しました📩")
         except Exception as e:
             st.error(f"朝のレポート送信エラー: {e}")
-        
-        # チェックが完了したら朝用のフラグを立てる
-        st.session_state["morning_checked"] = True
-
 
     # --- B. 20時の未完了警告送信 ---
-    # 🌟 20時以降 かつ 20時用のフラグが立っていない場合のみ実行
     if now_hour >= 20 and not st.session_state.get("warning_checked", False):
+        # 🌟 対策1：通信を行う【前】にフラグを立てて完全ロック！
+        st.session_state["warning_checked"] = True
+        
         try:
+            # 🌟 対策2：ttl=0 に設定！ 他人の送信状況もキャッシュ無視で最新を確認！
             try:
-                logs = st.session_state.task_logs_df.copy()
+                logs = conn.read(spreadsheet=target_url, worksheet="TaskLogs", ttl=0)
                 if 'date' not in logs.columns:
                     logs = pd.DataFrame(columns=['date', 'user', 'type'])
             except:
@@ -489,7 +492,6 @@ def check_and_trigger_report():
             if warning_sent.empty:
                 full_df = st.session_state.master_df.copy()
                 
-                # 各ユーザーの目標期日を読み込む
                 try:
                     goal_df = st.session_state.goal_dates_df.copy()
                 except:
@@ -507,26 +509,22 @@ def check_and_trigger_report():
                 today_dt = datetime.today().date()
 
                 for user in USER_CONFIG.keys():
-                    # 1. 休日の人は問答無用でスキップ
                     my_h_list = []
                     if not h_df.empty and 'user' in h_df.columns:
                         my_h_list = h_df[h_df['user'] == user]['holiday_date'].dropna().tolist()
                         if today_str in my_h_list:
                             continue 
                     
-                    # 2. その人の目標期日を取得
                     personal_target_date = EXAM_DATE
                     if not goal_df.empty and 'user' in goal_df.columns:
                         user_goal_row = goal_df[goal_df['user'] == user]
                         if not user_goal_row.empty:
                             personal_target_date = datetime.strptime(user_goal_row.iloc[0]['goal_date'], '%Y-%m-%d').date()
 
-                    # 3. 残りの「実質稼働日数」を計算
                     total_days_range = [(today_dt + timedelta(days=i)) for i in range((personal_target_date - today_dt).days + 1)]
                     active_study_days = [d for d in total_days_range if d.strftime('%Y-%m-%d') not in my_h_list]
                     net_days_left = len(active_study_days)
 
-                    # 4. 残り問題数から「1日のノルマ」を計算
                     u_df = full_df[full_df['user'] == user]
                     total_count = len(u_df)
                     unstarted_count = len(u_df[u_df['last_date'].astype(str).replace(['nan', 'None', 'NaN', '<NA>', ''], '') == ''])
@@ -537,24 +535,25 @@ def check_and_trigger_report():
                     daily_pace = math.ceil(remaining_questions / net_days_left) if net_days_left > 0 else remaining_questions
                     
                     if daily_pace <= 0:
-                        continue # ノルマ0（全問完了済みなど）ならスキップ
+                        continue 
 
-                    # 5. 今日の進捗と「本当のノルマ」を比較！
                     done_today = len(u_df[u_df['last_date'] == today_str])
                     if done_today < daily_pace:
                         unfinished.append(f"・{user} (現在{done_today}問 / ノルマ{daily_pace}問)")
                 
                 if unfinished:
                     warn_msg = "🚨 【緊急警告：20時】\n以下の怠慢者が本日のノルマ未達成です。\n\n" + "\n".join(unfinished) + "\n\n日付が変わる前に挽回しましょう。"
-                    if send_line_notification(warn_msg):
-                        new_log = pd.DataFrame([[today_str, "system", "20h_warning"]], columns=["date", "user", "type"])
-                        updated_logs = pd.concat([logs, new_log], ignore_index=True)
-                        conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
-                        st.session_state.task_logs_df = updated_logs  # 👈 この1行を追加！
+                    
+                    # 🌟 対策3：LINEを送る【前】にスプレッドシートを更新！
+                    new_log = pd.DataFrame([[today_str, "system", "20h_warning"]], columns=["date", "user", "type"])
+                    updated_logs = pd.concat([logs, new_log], ignore_index=True)
+                    conn.update(spreadsheet=target_url, worksheet="TaskLogs", data=updated_logs)
+                    st.session_state.task_logs_df = updated_logs  
+                    
+                    send_line_notification(warn_msg)
         except Exception as e:
             st.error(f"20時警告エラー: {e}")
 
-        # チェックが完了したら20時用のフラグを立てる
         st.session_state["warning_checked"] = True
 
 def check_unread_monologue(current_user):
