@@ -45,6 +45,9 @@ def handle_api_error(e):
 
 # 🌟 LINE通知用関数（エラー強制ストップ版）
 def send_line_notification(message):
+    # 👇 🌟 LINE機能を一時停止（再開時はこの1行を消すか # でコメントアウトしてください）
+    return True 
+
     import streamlit as st
     try:
         url = "https://api.line.me/v2/bot/message/broadcast"
