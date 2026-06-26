@@ -105,7 +105,9 @@ def update_study_time(current_user, elapsed_seconds, field="未分類"):
         handle_api_error(e)
 
 # --- 2. ユーザー別個別設定 ---
-FUTURE_CONFIG = {
+# --- 2. ユーザー別個別設定 ---
+# 👇 FUTURE_CONFIG を USER_CONFIG に書き換えるだけ！
+USER_CONFIG = {
     "佐藤1種用": {
         "deadline": datetime(2026, 8, 22).date(),
         "structure": [
@@ -550,7 +552,7 @@ has_unread = check_unread_monologue(current_user)
 mono_label = "ただの独り言 🔴" if has_unread else "ただの独り言"
 
 st.sidebar.divider()
-mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label])
+mode_select = st.sidebar.radio("機能", ["学習モード", "復習モード", "分析ダッシュボード", mono_label, "英単語暗記アプリ"])
 
 
 
@@ -1472,3 +1474,469 @@ elif mode_select in ["学習モード", "復習モード"]:
                 st.info(f"対象： **{selected_field}** （選択中の復習対象：{len(final_review_df)}問）")
                 
                 st.button("🔥 この内容で復習開始", use_container_width=True, on_click=start_test, args=(final_review_df,))
+
+        # 4️⃣ 英単語暗記アプリ
+elif mode_select == "英単語暗記アプリ":
+    import streamlit.components.v1 as components
+    
+    st.title("🔤 高機能・英単語暗記アプリ")
+    st.info("※ブラウザの音声読み上げ機能とPDF出力を使用しています。")
+    
+    # いただいたHTMLコードをそのまま文字列として読み込ませる
+    vocab_html = """
+    <!DOCTYPE html>
+    <html lang="ja">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高機能・英単語暗記アプリ</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+      body { font-family: 'Helvetica Neue', Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #f0f2f5; padding: 20px 0; box-sizing: border-box; }
+      
+      .settings-container { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; width: 80%; max-width: 320px; text-align: center; }
+      select { width: 100%; padding: 10px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; background-color: white; cursor: pointer; }
+      
+      /* アクションボタン群のスタイル */
+      .action-buttons { display: flex; gap: 10px; width: 80%; max-width: 320px; margin-bottom: 15px; }
+      .action-btn { flex: 1; padding: 12px; font-size: 14px; border: none; border-radius: 8px; color: white; cursor: pointer; font-weight: bold; transition: all 0.3s; }
+      #listenBtn { background-color: #17a2b8; }
+      #listenBtn.active { background-color: #ffc107; color: #333; }
+      #pdfBtn { background-color: #6f42c1; }
+      .action-btn:active { transform: scale(0.95); }
+
+      #card { width: 80%; max-width: 320px; height: 200px; background: white; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 28px; font-weight: bold; cursor: pointer; transition: all 0.3s ease; text-align: center; padding: 20px; user-select: none; position: relative; }
+      #card:active { transform: scale(0.95); }
+      
+      .audio-btn { position: absolute; top: 15px; right: 15px; background: none; border: none; font-size: 24px; cursor: pointer; box-shadow: none; padding: 5px; }
+      .audio-btn:active { transform: scale(0.9); }
+
+      .review-controls { margin-top: 20px; display: flex; gap: 15px; width: 80%; max-width: 320px; }
+      .review-btn { flex: 1; padding: 12px; font-size: 16px; border: none; border-radius: 25px; color: white; cursor: pointer; font-weight: bold; }
+      .btn-good { background-color: #28a745; }
+      .btn-bad { background-color: #dc3545; }
+
+      .controls { margin-top: 25px; display: flex; gap: 40px; }
+      .nav-btn { padding: 8px 16px; font-size: 14px; border: none; border-radius: 8px; background-color: #6c757d; color: white; cursor: pointer; }
+      
+      button:disabled { background-color: #ccc; cursor: not-allowed; opacity: 0.6; }
+      #progress { margin-bottom: 15px; font-size: 18px; color: #555; font-weight: bold; }
+      .hint { font-size: 14px; color: #888; margin-top: 15px; }
+      #status { font-size: 16px; color: #007bff; margin-bottom: 20px; }
+      .count-badge { font-size: 12px; color: #666; margin-top: 8px; font-weight: normal; }
+    </style>
+    </head>
+    <body>
+
+    <div class="settings-container">
+      <select id="fileSelector" onchange="onFileSelected()">
+        <option value="">-- 単語帳を選択してください --</option>
+      </select>
+      <select id="modeSelector" onchange="onModeSelected()">
+        <option value="en-ja">英語 ➔ 日本語</option>
+        <option value="ja-en">日本語 ➔ 英語</option>
+      </select>
+    </div>
+
+    <div id="status">単語帳のリストを読み込み中...</div>
+
+    <div id="mainContent" style="display: none; text-align: center; width: 100%; flex-direction: column; align-items: center;">
+      
+      <div class="action-buttons">
+        <button id="listenBtn" class="action-btn" onclick="toggleListening()">🎧 リスニング</button>
+        <button id="pdfBtn" class="action-btn" onclick="generatePDF()">📄 PDF出力</button>
+      </div>
+      
+      <div id="progress"></div>
+      
+      <div id="card" onclick="manualFlipCard()">
+        <button class="audio-btn" onclick="speakEnglish(event)">🔊</button>
+        <div id="wordText"></div>
+        <div id="countText" class="count-badge"></div>
+      </div>
+      
+      <div class="hint">👆 カードをタップして意味を確認</div>
+
+      <div class="review-controls">
+        <button class="review-btn btn-bad" onclick="submitReview('bad')">❌ わからない</button>
+        <button class="review-btn btn-good" onclick="submitReview('good')">⭕ 覚えてる</button>
+      </div>
+
+      <div class="controls">
+        <button id="prevBtn" class="nav-btn" onclick="prevWord()">◀ 前へ</button>
+        <button id="nextBtn" class="nav-btn" onclick="nextWord()">次へ ▶</button>
+      </div>
+    </div>
+
+    <script>
+      const API_URL = "https://script.google.com/macros/s/AKfycbw7ZOnsbYxup71L-5eJB5jSNQLV0C-MdYrjuTzTI63shmknipaAsjSPFbYVGzyA-ILp/exec";
+
+      let words = [];
+      let currentIndex = 0;
+      let isFlipped = false;
+      let currentFileId = "";
+      let currentFileName = "単語リスト"; // PDFのタイトル用
+      let studyMode = "en-ja"; 
+      let isListening = false; 
+      let wakeLock = null; 
+      
+      let availableVoices = [];
+      window.speechSynthesis.onvoiceschanged = () => {
+        availableVoices = window.speechSynthesis.getVoices();
+      };
+
+      const fileSelector = document.getElementById("fileSelector");
+      const modeSelector = document.getElementById("modeSelector");
+      const listenBtn = document.getElementById("listenBtn");
+      const statusEl = document.getElementById("status");
+      const mainContent = document.getElementById("mainContent");
+      const wordTextEl = document.getElementById("wordText");
+      const countTextEl = document.getElementById("countText");
+      const cardEl = document.getElementById("card");
+      const progressEl = document.getElementById("progress");
+      const prevBtn = document.getElementById("prevBtn");
+      const nextBtn = document.getElementById("nextBtn");
+
+      async function loadFileList() {
+        try {
+          const response = await fetch(`${API_URL}?action=list`);
+          const files = await response.json();
+          if (files.error) { statusEl.innerText = `エラー: ${files.error}`; return; }
+          files.forEach(file => {
+            const option = document.createElement("option");
+            option.value = file.id;
+            option.text = file.name;
+            fileSelector.appendChild(option);
+          });
+          statusEl.innerText = "単語帳を選んでください。";
+        } catch (error) { statusEl.innerText = "ファイル一覧の取得に失敗しました。"; }
+      }
+
+      async function onFileSelected() {
+        stopListening(); 
+        currentFileId = fileSelector.value;
+        
+        // 選択されたファイル名を取得（PDFタイトルに使用）
+        if (fileSelector.selectedIndex > 0) {
+          currentFileName = fileSelector.options[fileSelector.selectedIndex].text;
+        }
+
+        if (!currentFileId) {
+          mainContent.style.display = "none";
+          statusEl.innerText = "単語帳を選んでください。";
+          return;
+        }
+        statusEl.style.display = "block";
+        statusEl.innerText = "単語データを読み込み中...";
+        mainContent.style.display = "none";
+
+        try {
+          const response = await fetch(`${API_URL}?action=words&id=${currentFileId}`);
+          words = await response.json();
+          if (words.error) { statusEl.innerText = `エラー: ${words.error}`; return; }
+          
+          if (words.length > 0) {
+            for (let i = words.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [words[i], words[j]] = [words[j], words[i]];
+            }
+            statusEl.style.display = "none";
+            mainContent.style.display = "flex";
+            currentIndex = 0;
+            updateCard();
+          } else {
+            statusEl.innerText = "学習する単語がありません。";
+          }
+        } catch (error) { statusEl.innerText = "単語データの読み込みに失敗しました。"; }
+      }
+
+      function onModeSelected() {
+        studyMode = modeSelector.value;
+        stopListening();
+        if (words.length > 0) {
+          updateCard();
+        }
+      }
+
+      function updateCard() {
+        isFlipped = false;
+        renderCardView();
+        prevBtn.disabled = currentIndex === 0;
+        nextBtn.disabled = currentIndex === words.length - 1;
+        
+        if (!isListening) {
+          if (studyMode === "en-ja") {
+            speakEnglish();
+          }
+        }
+      }
+
+      function renderCardView() {
+        let currentWord = words[currentIndex];
+        let safeCount = currentWord.count || 0;
+        let showEnglish = (studyMode === "en-ja" && !isFlipped) || (studyMode === "ja-en" && isFlipped);
+        
+        if (showEnglish) {
+          wordTextEl.innerText = currentWord.en;
+        } else {
+          wordTextEl.innerText = currentWord.ja;
+        }
+
+        if (isFlipped) {
+          countTextEl.innerText = ""; 
+          cardEl.style.backgroundColor = "#e3f2fd";
+          cardEl.style.color = "#0277bd";
+        } else {
+          countTextEl.innerText = `覚えた回数: ${safeCount} / 10`;
+          cardEl.style.backgroundColor = "white";
+          cardEl.style.color = "black";
+        }
+        progressEl.innerText = `${currentIndex + 1} / ${words.length}`;
+      }
+
+      function manualFlipCard() {
+        stopListening(); 
+        flipCard();
+      }
+
+      function flipCard() {
+        isFlipped = !isFlipped;
+        renderCardView();
+        
+        if (!isListening) {
+          if (studyMode === "ja-en" && isFlipped) {
+            speakEnglish();
+          }
+        }
+      }
+
+      function speakEnglish(event) {
+        if (event) {
+          event.stopPropagation();
+          stopListening();
+        }
+        if (!words[currentIndex]) return;
+        playVoice(words[currentIndex].en, 'en');
+      }
+
+      function playVoice(text, langCode, onEndCallback) {
+        const uttr = new SpeechSynthesisUtterance(text);
+        uttr.lang = langCode === 'en' ? "en-US" : "ja-JP";
+        
+        if (availableVoices.length === 0) availableVoices = window.speechSynthesis.getVoices();
+        const voices = availableVoices.filter(v => v.lang.startsWith(langCode));
+        
+        let preferredVoice;
+        if (langCode === 'en') {
+          preferredVoice = voices.find(v => v.name.includes('Samantha') || v.name.includes('Zira') || v.name.includes('Female'));
+        } else {
+          preferredVoice = voices.find(v => v.name.includes('Kyoko') || v.name.includes('Google 日本語') || v.name.includes('Hattori'));
+        }
+        
+        if (preferredVoice) uttr.voice = preferredVoice;
+        else if (voices.length > 0) uttr.voice = voices[0]; 
+
+        if (onEndCallback) {
+          uttr.onend = onEndCallback;
+          uttr.onerror = onEndCallback; 
+        }
+
+        window.speechSynthesis.cancel(); 
+        window.speechSynthesis.speak(uttr);
+      }
+
+      async function toggleListening() {
+        if (isListening) {
+          stopListening();
+        } else {
+          isListening = true;
+          listenBtn.innerText = "⏹️ 停止";
+          listenBtn.classList.add("active");
+          
+          try {
+            if ('wakeLock' in navigator) {
+              wakeLock = await navigator.wakeLock.request('screen');
+            }
+          } catch (err) {
+            console.log("スリープ防止非対応");
+          }
+          playNextListeningSequence();
+        }
+      }
+
+      function stopListening() {
+        isListening = false;
+        window.speechSynthesis.cancel();
+        listenBtn.innerText = "🎧 リスニング";
+        listenBtn.classList.remove("active");
+        
+        if (wakeLock !== null) {
+          wakeLock.release().then(() => { wakeLock = null; });
+        }
+      }
+
+      function playNextListeningSequence() {
+        if (!isListening) return;
+
+        let currentWord = words[currentIndex];
+        
+        let firstText = studyMode === "en-ja" ? currentWord.en : currentWord.ja;
+        let firstLang = studyMode === "en-ja" ? 'en' : 'ja';
+        let secondText = studyMode === "en-ja" ? currentWord.ja : currentWord.en;
+        let secondLang = studyMode === "en-ja" ? 'ja' : 'en';
+
+        isFlipped = false;
+        renderCardView();
+
+        playVoice(firstText, firstLang, () => {
+          if (!isListening) return;
+          
+          setTimeout(() => {
+            if (!isListening) return;
+            isFlipped = true;
+            renderCardView();
+
+            playVoice(secondText, secondLang, () => {
+              if (!isListening) return;
+
+              setTimeout(() => {
+                if (!isListening) return;
+                
+                if (currentIndex < words.length - 1) {
+                  currentIndex++;
+                } else {
+                  currentIndex = 0;
+                }
+                playNextListeningSequence(); 
+              }, 1500); 
+            });
+          }, 1000); 
+        });
+      }
+
+      async function submitReview(status) {
+        stopListening(); 
+        const currentWord = words[currentIndex];
+        let currentCount = currentWord.count || 0;
+        
+        fetch(`${API_URL}?action=review&id=${currentFileId}&en=${encodeURIComponent(currentWord.en)}&status=${status}`);
+
+        if (status === 'good') {
+          currentWord.count = currentCount + 1;
+          if (currentWord.count >= 10) {
+            alert(`🎉「${currentWord.en}」を10回覚えました！この単語は1ヶ月間表示されなくなります。`);
+            words.splice(currentIndex, 1);
+            if (words.length === 0) {
+              mainContent.style.display = "none";
+              statusEl.style.display = "block";
+              statusEl.innerText = "素晴らしい！すべての単語の学習が完了しました！";
+              return;
+            }
+            if (currentIndex >= words.length) { currentIndex = words.length - 1; }
+            updateCard();
+            return;
+          }
+        } else {
+          currentWord.count = 0; 
+        }
+
+        if (currentIndex < words.length - 1) {
+          currentIndex++;
+          updateCard();
+        } else {
+          updateCard();
+          alert("最後の単語です！");
+        }
+      }
+
+      function nextWord() { stopListening(); if (currentIndex < words.length - 1) { currentIndex++; updateCard(); } }
+      function prevWord() { stopListening(); if (currentIndex > 0) { currentIndex--; updateCard(); } }
+
+      // =====================
+      // 📄 PDF生成機能
+      // =====================
+      function generatePDF() {
+        if (words.length === 0) {
+          alert("出力する単語がありません。");
+          return;
+        }
+
+        // PDF生成中であることをユーザーに知らせる
+        const pdfBtn = document.getElementById("pdfBtn");
+        const originalText = pdfBtn.innerText;
+        pdfBtn.innerText = "⏳ 処理中...";
+        pdfBtn.disabled = true;
+
+        // PDF化するための専用の見えない画面（表）を作成
+        const container = document.createElement("div");
+        container.style.padding = "30px";
+        container.style.fontFamily = "'Helvetica Neue', Arial, sans-serif";
+        container.style.color = "#333";
+
+        // タイトル
+        const title = document.createElement("h2");
+        title.innerText = `${currentFileName} - 学習リスト`;
+        title.style.textAlign = "center";
+        title.style.borderBottom = "2px solid #007bff";
+        title.style.paddingBottom = "10px";
+        container.appendChild(title);
+
+        // 単語のテーブル（表）
+        const table = document.createElement("table");
+        table.style.width = "100%";
+        table.style.borderCollapse = "collapse";
+        table.style.marginTop = "20px";
+        table.style.fontSize = "14px";
+
+        // 表のヘッダー
+        const thead = document.createElement("thead");
+        thead.innerHTML = `
+          <tr>
+            <th style="border: 1px solid #ccc; padding: 10px; background-color: #f8f9fa; width: 50%;">English (英語)</th>
+            <th style="border: 1px solid #ccc; padding: 10px; background-color: #f8f9fa; width: 50%;">Japanese (日本語)</th>
+          </tr>
+        `;
+        table.appendChild(thead);
+
+        // 表の中身（英・日の一覧）
+        const tbody = document.createElement("tbody");
+        words.forEach(word => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td style="border: 1px solid #ccc; padding: 10px; font-weight: bold;">${word.en}</td>
+            <td style="border: 1px solid #ccc; padding: 10px;">${word.ja}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+
+        // html2pdfのオプション設定
+        const opt = {
+          margin:       15,
+          filename:     `${currentFileName}.pdf`,
+          image:        { type: 'jpeg', quality: 0.98 },
+          html2canvas:  { scale: 2 }, // 高画質化
+          jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        };
+
+        // PDFを出力（完了後にボタンを元に戻す）
+        html2pdf().set(opt).from(container).save().then(() => {
+          pdfBtn.innerText = originalText;
+          pdfBtn.disabled = false;
+        }).catch(err => {
+          alert("PDFの生成に失敗しました。");
+          pdfBtn.innerText = originalText;
+          pdfBtn.disabled = false;
+        });
+      }
+
+      loadFileList();
+    </script>
+    </body>
+    </html>
+    """
+    
+    # iframeとして画面に埋め込む（スクロールバーが出ないように高さを少し大きめに確保）
+    components.html(vocab_html, height=800, scrolling=True)
